@@ -1,0 +1,27 @@
+# ====================================================================
+# FRAUD DETECTION SYSTEM - Dependencies (Zero-Cost Stack)
+# ====================================================================
+
+# --- LLM Provider ---
+google-generativeai>=0.8.0 # Gemini 2.5 Flash - TẤT CẢ agents (free tier)
+
+# --- Graph Database ---
+neo4j>=5.25.0              # Neo4j driver - thay thế Amazon Neptune (AuraDB free)
+
+# --- Vector Store ---
+chromadb>=0.5.0            # ChromaDB Cloud - vector store (trychroma.com)
+
+# --- Document Database ---
+pymongo>=4.8.0             # MongoDB Atlas driver - thay thế DynamoDB (M0 free tier)
+
+# --- Agent Orchestration ---
+langgraph>=0.2.0           # LangGraph - agent graph orchestration
+
+# --- Web Framework ---
+fastapi>=0.115.0           # API framework + BackgroundTasks
+uvicorn>=0.30.0            # ASGI server
+
+# --- Data & Utilities ---
+pydantic>=2.0.0            # Data validation & models
+python-dotenv>=1.0.0       # Đọc .env config
+aiohttp>=3.9.0             # Async HTTP client
