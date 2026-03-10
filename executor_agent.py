@@ -29,7 +29,7 @@ import json
 from typing import Optional
 
 from models import PlannerTask, ExecutorResult, TaskType
-from redis_service import redis_service
+from simulators import redis_service
 from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
@@ -41,11 +41,11 @@ from llm_providers import gemini_provider
 # =====================================================================
 
 TOOL_SCHEMA = """
-Available database tools for fraud investigation:
+Các công cụ truy vấn database cho điều tra gian lận:
 
-1. neo4j_cypher — Run arbitrary Cypher query on Neo4j graph database
+1. neo4j_cypher — Chạy truy vấn Cypher trên Neo4j (graph database)
    params: {"query": "MATCH ...", "params": {"key": "value"}}
-   Neo4j Schema:
+   Schema Neo4j:
      Nodes: (:Account {id, name, risk_score}), (:Device {id, type}), (:IP {id, label}), (:Merchant {id, name, category})
      Relationships:
        (:Account)-[:TRANSFERS_TO {amount, timestamp}]->(:Account)
@@ -53,75 +53,75 @@ Available database tools for fraud investigation:
        (:Account)-[:CONNECTS_FROM]->(:IP)
        (:Account)-[:PAYS_TO]->(:Merchant)
 
-2. neo4j_neighbors — Get neighbor nodes of an account in the graph
+2. neo4j_neighbors — Lấy các node láng giềng của tài khoản trong đồ thị
    params: {"account_id": "ACC_001", "depth": 2}
 
-3. neo4j_shared_entities — Find other accounts sharing the same device or IP
-   params: {"account_id": "ACC_001", "entity_type": "device" or "ip"}
+3. neo4j_shared_entities — Tìm tài khoản khác dùng chung thiết bị hoặc IP
+   params: {"account_id": "ACC_001", "entity_type": "device" hoặc "ip"}
 
-4. neo4j_circular_flows — Detect circular fund flow patterns
+4. neo4j_circular_flows — Phát hiện luồng tiền vòng tròn (rửa tiền)
    params: {"account_id": "ACC_001"}
 
-5. neo4j_blacklisted — Find connections to known blacklisted accounts
+5. neo4j_blacklisted — Tìm kết nối đến tài khoản bị chặn (blacklist)
    params: {"account_id": "ACC_001"}
 
-6. mongodb_profile — Get customer profile (KYC status, risk category, account age, behavioral baseline)
+6. mongodb_profile — Lấy hồ sơ khách hàng (KYC, mức rủi ro, tuổi tài khoản, hành vi cơ sở)
    params: {"account_id": "ACC_001"}
 
-7. mongodb_history — Get recent transaction history
+7. mongodb_history — Lấy lịch sử giao dịch gần đây
    params: {"account_id": "ACC_001", "limit": 20}
 
-8. mongodb_related — Get list of accounts this account has transacted with
+8. mongodb_related — Lấy danh sách tài khoản đã giao dịch cùng
    params: {"account_id": "ACC_001"}
 
-9. mongodb_query — Run custom read-only MongoDB query
-   params: {"collection": "customer_profiles" or "transaction_history", "filter": {...}, "limit": 20}
+9. mongodb_query — Chạy truy vấn MongoDB tùy chỉnh (chỉ đọc)
+   params: {"collection": "customer_profiles" hoặc "transaction_history", "filter": {...}, "limit": 20}
 
-10. chromadb_search — Semantic search in fraud knowledge base (patterns, past cases, regulations)
-    params: {"query": "search text describing what to find", "top_k": 3, "filter_type": "fraud_pattern" or "past_investigation" or null}
+10. chromadb_search — Tìm kiếm ngữ nghĩa trong cơ sở tri thức gian lận (patterns, vụ án cũ, quy định)
+    params: {"query": "mô tả nội dung cần tìm", "top_k": 3, "filter_type": "fraud_pattern" hoặc "past_investigation" hoặc null}
 
-11. redis_velocity — Get transaction velocity (count in time window)
+11. redis_velocity — Đếm tốc độ giao dịch (số lượng trong khoảng thời gian)
     params: {"account_id": "ACC_001", "hours": 1}
 
-12. redis_blacklist — Check if an account is on the blacklist
+12. redis_blacklist — Kiểm tra tài khoản có trong danh sách đen không
     params: {"account_id": "ACC_001"}
 """.strip()
 
-QUERY_GEN_SYSTEM = f"""You are the Executor Agent in a fraud detection system.
-Your role: receive an investigation task and generate the optimal database queries to gather evidence.
+QUERY_GEN_SYSTEM = f"""Bạn là Executor Agent trong hệ thống phát hiện gian lận ngân hàng.
+Nhiệm vụ: nhận task điều tra và sinh các truy vấn database tối ưu để thu thập bằng chứng.
 
 {TOOL_SCHEMA}
 
-RULES:
-- Generate 1-5 tool_calls that best investigate the given task.
-- For neo4j_cypher, use parameterized queries with $param syntax for safety.
-- Choose tools that match the task type (graph tasks → neo4j tools, behavioral → mongodb, knowledge → chromadb, etc.)
-- Be specific: include actual account IDs, search terms, relevant filters.
-- Return ONLY valid JSON, no extra text.
+QUY TẮC:
+- Sinh 1-5 tool_calls phù hợp nhất với task điều tra.
+- Với neo4j_cypher, dùng parameterized queries với cú pháp $param để đảm bảo an toàn.
+- Chọn tool phù hợp loại task (phân tích đồ thị → neo4j, hành vi → mongodb, tri thức → chromadb, v.v.)
+- Cụ thể: bao gồm account ID thực tế, từ khóa tìm kiếm, filter liên quan.
+- Chỉ trả về JSON hợp lệ, không thêm text.
 
-Output format:
+Định dạng output:
 {{
-  "reasoning": "Brief strategy explanation",
+  "reasoning": "Giải thích ngắn gọn chiến lược truy vấn",
   "tool_calls": [
-    {{"tool": "tool_name", "params": {{...}}}}
+    {{"tool": "tên_tool", "params": {{...}}}}
   ]
 }}"""
 
-ANALYSIS_SYSTEM = """You are a fraud analyst AI. Analyze database query results from a fraud investigation.
+ANALYSIS_SYSTEM = """Bạn là chuyên gia phân tích gian lận AI. Phân tích kết quả truy vấn database từ cuộc điều tra gian lận.
 
-RULES:
-- Identify specific, evidence-based risk indicators from the data.
-- Each risk_indicator format: "INDICATOR_TYPE: specific evidence details"
-- Examples: "HIGH_VELOCITY: 15 transactions in 1h (baseline 2/h)", "SHARED_DEVICE: DEV_X shared with MULE_001", "KYC_NOT_VERIFIED: account ACC_001 status=pending"
-- Only flag risks supported by actual evidence in the data.
-- If data shows nothing suspicious, return empty risk_indicators list.
-- Be concise but thorough in analysis.
-- Return ONLY valid JSON, no extra text.
+QUY TẮC:
+- Xác định các chỉ số rủi ro cụ thể, dựa trên bằng chứng từ dữ liệu.
+- Định dạng mỗi risk_indicator: "LOẠI_CHỈ_SỐ: chi tiết bằng chứng cụ thể"
+- Ví dụ: "HIGH_VELOCITY: 15 giao dịch trong 1h (baseline 2/h)", "SHARED_DEVICE: DEV_X dùng chung với MULE_001", "KYC_NOT_VERIFIED: tài khoản ACC_001 status=pending"
+- Chỉ gắn cờ rủi ro khi có bằng chứng thực tế trong dữ liệu.
+- Nếu dữ liệu không có gì đáng ngờ, trả về risk_indicators rỗng.
+- Phân tích ngắn gọn nhưng kỹ lưỡng.
+- Chỉ trả về JSON hợp lệ, không thêm text.
 
-Output format:
+Định dạng output:
 {
-  "analysis": "2-5 sentence analysis of findings",
-  "risk_indicators": ["INDICATOR_TYPE: details", ...]
+  "analysis": "Phân tích 2-5 câu về phát hiện",
+  "risk_indicators": ["LOẠI_CHỈ_SỐ: chi tiết", ...]
 }"""
 
 
@@ -239,12 +239,12 @@ class ExecutorAgent:
     def _generate_query_plan(self, task: PlannerTask) -> dict:
         """Gửi task → Gemini → nhận lại tool_calls JSON."""
         user_message = (
-            f"Investigation Task:\n"
-            f"- Type: {task.task_type.value}\n"
-            f"- Description: {task.description}\n"
-            f"- Query hint: {task.query or 'None'}\n"
-            f"- Priority: {task.priority}\n\n"
-            f"Generate the optimal database queries for this task."
+            f"Task điều tra:\n"
+            f"- Loại: {task.task_type.value}\n"
+            f"- Mô tả: {task.description}\n"
+            f"- Gợi ý truy vấn: {task.query or 'Không có'}\n"
+            f"- Độ ưu tiên: {task.priority}\n\n"
+            f"Sinh các truy vấn database tối ưu cho task này."
         )
 
         plan = gemini_provider.chat_json(
@@ -315,9 +315,9 @@ class ExecutorAgent:
             results_str = results_str[:8000] + "\n... (truncated)"
 
         user_message = (
-            f"Investigation Task: [{task.task_type.value}] {task.description}\n\n"
-            f"Database Query Results:\n{results_str}\n\n"
-            f"Analyze the data and identify fraud risk indicators."
+            f"Task điều tra: [{task.task_type.value}] {task.description}\n\n"
+            f"Kết quả truy vấn Database:\n{results_str}\n\n"
+            f"Phân tích dữ liệu và xác định các chỉ số rủi ro gian lận."
         )
 
         analysis = gemini_provider.chat_json(

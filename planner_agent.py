@@ -63,7 +63,7 @@ CÁC LOẠI TASK CÓ THỂ TẠO:
 QUY TẮC:
 - Phân tích KỸ context từ Phase 1 để hiểu TẠI SAO giao dịch bị flag
 - Tạo HYPOTHESIS (giả thuyết gian lận) cụ thể
-- Chỉ tạo tasks CẦN THIẾT cho hypothesis đó (KHÔNG làm hết mọi thứ)
+- Chỉ tạo tasks "CẦN THIẾT" cho hypothesis đó ("KHÔNG phải lúc nào cũng làm hết mọi thứ")
 - Gán priority: 10 (cao nhất) → 1 (thấp nhất)
 - Nếu tasks phụ thuộc nhau, chỉ định depends_on
 

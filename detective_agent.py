@@ -14,7 +14,7 @@
 from __future__ import annotations
 import json
 from models import InvestigationReport, DecisionResult, FinalDecision
-from redis_service import redis_service
+from simulators import redis_service
 from vector_store import vector_store
 from llm_providers import gemini_provider
 

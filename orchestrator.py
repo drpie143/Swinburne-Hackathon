@@ -46,7 +46,7 @@ from models import (
     InvestigationReport, DecisionResult,
     RiskLevel, FinalDecision, TaskType,
 )
-from redis_service import redis_service
+from simulators import redis_service
 from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
@@ -259,6 +259,8 @@ def phase1_screening(state: GraphState) -> GraphState:
         risk_level = RiskLevel.GREEN
     elif (
         sender_flags.is_blacklisted
+        or receiver_flags.is_blacklisted
+        or any(r.severity == "critical" for r in triggered_rules)
         or risk_score > 0.9
     ):
         risk_level = RiskLevel.RED

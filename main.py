@@ -20,8 +20,8 @@
 #     → GREEN: sender whitelisted, low amount, low risk
 #     → Expected: ALLOW (skip investigation)
 #
-#   Scenario 2: ACC_007 → MULE_001 ($950)
-#     → YELLOW: velocity cao + amount gần threshold + receiver là MULE
+#   Scenario 2: ACC_007 → ACC_002 ($950)
+#     → YELLOW: velocity cao + amount gần threshold + risk score cao
 #     → Expected: Investigation → likely BLOCK (structuring pattern)
 #
 #   Scenario 3: ACC_050 → ACC_666 ($25,000)
@@ -73,8 +73,8 @@ DEMO_SCENARIOS = [
         "name": "Scenario 2: Structuring Pattern (Expected: YELLOW → BLOCK)",
         "description": (
             "ACC_007 (Trần Thị B, tài khoản mới 45 ngày, velocity CAO) "
-            "gửi $950 cho MULE_001. Nghi ngờ structuring: "
-            "15 GD nhỏ (<$1000) trong 1 giờ qua."
+            "gửi $950 cho ACC_002. Nghi ngờ structuring: "
+            "15 GD nhỏ (<$1000) trong 1 giờ qua, risk score cao."
         ),
         "transaction": Transaction(
             transaction_id="TXN_DEMO_002",
@@ -82,8 +82,8 @@ DEMO_SCENARIOS = [
             sender_id="ACC_007",
             sender_name="Trần Thị B",
             sender_account_type="checking",
-            receiver_id="MULE_001",
-            receiver_name="Phạm Văn X",
+            receiver_id="ACC_002",
+            receiver_name="Trần Minh Tuấn",
             amount=950.00,
             currency="USD",
             transaction_type="transfer",
