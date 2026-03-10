@@ -29,7 +29,7 @@ import json
 from typing import Optional
 
 from models import PlannerTask, ExecutorResult, TaskType
-from simulators import redis_sim
+from redis_service import redis_service
 from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
@@ -436,12 +436,12 @@ class ExecutorAgent:
         )
 
     def _tool_redis_velocity(self, params: dict):
-        return redis_sim.get_velocity(
+        return redis_service.get_velocity(
             params.get("account_id", ""),
             hours=params.get("hours", 1),
         )
 
     def _tool_redis_blacklist(self, params: dict):
-        return redis_sim.is_blacklisted(
+        return redis_service.is_blacklisted(
             params.get("account_id", ""),
         )

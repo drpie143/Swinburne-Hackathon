@@ -14,7 +14,7 @@
 from __future__ import annotations
 import json
 from models import InvestigationReport, DecisionResult, FinalDecision
-from simulators import redis_sim
+from redis_service import redis_service
 from vector_store import vector_store
 from llm_providers import gemini_provider
 
@@ -176,8 +176,8 @@ class DetectiveAgent:
         """
         if decision == FinalDecision.BLOCK:
             if sender_id:
-                redis_sim.update_blacklist(sender_id, add=True)
-                redis_sim.update_risk_score(sender_id, 0.95)
+                redis_service.update_blacklist(sender_id, add=True)
+                redis_service.update_risk_score(sender_id, 0.95)
                 print(f"\n   🔒 Phase 3: BLOCK enforcement")
                 print(f"      → Blacklisted: {sender_id}")
                 print(f"      → Risk score: 0.95")
@@ -196,10 +196,10 @@ class DetectiveAgent:
         
         elif decision == FinalDecision.ALLOW:
             if sender_id:
-                redis_sim.update_whitelist(sender_id, add=True)
-                current_score = redis_sim.get_risk_score(sender_id)
+                redis_service.update_whitelist(sender_id, add=True)
+                current_score = redis_service.get_risk_score(sender_id)
                 new_score = max(current_score - 0.1, 0.01)
-                redis_sim.update_risk_score(sender_id, new_score)
+                redis_service.update_risk_score(sender_id, new_score)
                 print(f"\n   ✅ Phase 3: ALLOW enforcement")
                 print(f"      → Whitelisted: {sender_id}")
                 print(f"      → Risk score: {current_score:.2f} → {new_score:.2f}")

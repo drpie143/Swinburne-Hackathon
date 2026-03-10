@@ -55,9 +55,12 @@ class Settings(BaseModel):
     chroma_database: str = ""
     chroma_collection_name: str = "fraud_knowledge_base"
     
-    # --- Redis / ElastiCache (giữ simulator cho demo) ---
+    # --- Redis Cloud (Thay thế Amazon ElastiCache) ---
+    # Redis Cloud free tier hoặc paid tier
+    # Dùng cho Phase 1: whitelist, blacklist, risk scores, velocity
     redis_host: str = "localhost"
     redis_port: int = 6379
+    redis_username: str = "default"
     redis_password: str = ""
     
     # --- MongoDB Atlas (Thay thế DynamoDB) ---
@@ -101,6 +104,7 @@ def get_settings() -> Settings:
         mongodb_db_name=os.getenv("MONGODB_DB_NAME", "fraud_detection"),
         redis_host=os.getenv("REDIS_HOST", "localhost"),
         redis_port=int(os.getenv("REDIS_PORT", "6379")),
+        redis_username=os.getenv("REDIS_USERNAME", "default"),
         redis_password=os.getenv("REDIS_PASSWORD", ""),
         dynamodb_endpoint=os.getenv("DYNAMODB_ENDPOINT", "http://localhost:8000"),
         dynamodb_table_transactions=os.getenv("DYNAMODB_TABLE_TRANSACTIONS", "fraud_transactions"),
