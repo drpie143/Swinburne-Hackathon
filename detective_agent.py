@@ -61,9 +61,13 @@ class DetectiveAgent:
     - Trigger Phase 3 enforcement
     """
     
-    def adjudicate(self, report: InvestigationReport) -> DecisionResult:
+    def adjudicate(self, report: InvestigationReport, sender_id_fallback: str = "") -> DecisionResult:
         """
         Ra quyết định cuối cùng bằng Gemini LLM.
+        
+        Args:
+            report: Báo cáo điều tra từ Report Agent
+            sender_id_fallback: sender_id từ transaction (fallback khi evidence thiếu)
         """
         print(f"\n{'='*60}")
         print(f"🕵️ DETECTIVE (Gemini LLM): Phân tích và ra quyết định...")
@@ -98,7 +102,7 @@ class DetectiveAgent:
         
         # ─── Phase 3 Enforcement ───
         actions = llm_response.get("actions", [])
-        sender_id = self._extract_sender_id(report)
+        sender_id = self._extract_sender_id(report) or sender_id_fallback
         
         self._enforce_decision(decision, sender_id, report, actions)
         
@@ -154,10 +158,27 @@ class DetectiveAgent:
         return "\n".join(lines)
     
     def _extract_sender_id(self, report: InvestigationReport) -> str:
-        """Lấy sender_id từ evidence."""
+        """Lấy sender_id từ evidence (nhiều fallback strategies)."""
+        # Strategy 1: Tìm từ profile.customer_id trong evidence
         for ev in report.evidence:
             if ev.raw_data.get("profile", {}).get("customer_id"):
                 return ev.raw_data["profile"]["customer_id"]
+        
+        # Strategy 2: Tìm từ sender_id / sender trong evidence raw_data
+        for ev in report.evidence:
+            sender = ev.raw_data.get("sender_id") or ev.raw_data.get("sender")
+            if sender:
+                return sender
+        
+        # Strategy 3: Tìm từ transaction info trong evidence raw_data
+        for ev in report.evidence:
+            txn_info = ev.raw_data.get("transaction", {})
+            if isinstance(txn_info, dict):
+                sender = txn_info.get("sender_id") or txn_info.get("sender")
+                if sender:
+                    return sender
+        
+        print("   ⚠️  WARNING: Không tìm được sender_id từ evidence")
         return ""
     
     def _enforce_decision(
@@ -171,8 +192,8 @@ class DetectiveAgent:
         Phase 3: Thực thi enforcement actions.
         
         BLOCK → blacklist + risk score 0.95 + index pattern vào ChromaDB
-        ALLOW → whitelist + giảm risk score
-        ESCALATE → hold + notify
+        ALLOW → whitelist + giảm risk score + index pattern vào ChromaDB
+        ESCALATE → tăng risk score + index pattern vào ChromaDB
         """
         if decision == FinalDecision.BLOCK:
             if sender_id:
@@ -203,7 +224,38 @@ class DetectiveAgent:
                 print(f"\n   ✅ Phase 3: ALLOW enforcement")
                 print(f"      → Whitelisted: {sender_id}")
                 print(f"      → Risk score: {current_score:.2f} → {new_score:.2f}")
+            
+            # Index vào ChromaDB (lưu pattern "cleared" cho future reference)
+            allow_pattern = {
+                "type": "past_investigation",
+                "title": f"Case: {report.transaction_id} allowed",
+                "description": report.summary,
+                "mitigating_factors": report.mitigating_factors[:5],
+                "decision": "ALLOW",
+            }
+            pattern_id = vector_store.index_new_pattern(allow_pattern)
+            actions.append(f"indexed_pattern:{pattern_id}")
+            print(f"      → ChromaDB updated: {pattern_id}")
         
         elif decision == FinalDecision.ESCALATE:
             print(f"\n   ⚠️  Phase 3: ESCALATE to human review")
             print(f"      → Transaction held pending review")
+            
+            # Tăng risk score cho sender (nghi ngờ nhưng chưa chắc chắn)
+            if sender_id:
+                current_score = redis_service.get_risk_score(sender_id)
+                new_score = min(current_score + 0.15, 0.89)  # Không vượt 0.9 (auto-block)
+                redis_service.update_risk_score(sender_id, new_score)
+                print(f"      → Risk score: {current_score:.2f} → {new_score:.2f}")
+            
+            # Index vào ChromaDB (lưu pattern "pending review")
+            escalate_pattern = {
+                "type": "past_investigation",
+                "title": f"Case: {report.transaction_id} escalated",
+                "description": report.summary,
+                "risk_factors": report.risk_factors[:5],
+                "decision": "ESCALATE",
+            }
+            pattern_id = vector_store.index_new_pattern(escalate_pattern)
+            actions.append(f"indexed_pattern:{pattern_id}")
+            print(f"      → ChromaDB updated: {pattern_id}")

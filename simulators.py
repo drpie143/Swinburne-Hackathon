@@ -38,12 +38,12 @@ class RedisSimulator:
         # --- Whitelist: Tài khoản đã verified, giao dịch được allow nhanh ---
         self._whitelist: set[str] = {
             "ACC_001", "ACC_002", "ACC_003", "ACC_004", "ACC_005",
-            "ACC_010", "ACC_011", "ACC_012"
+            "ACC_010"
         }
         
         # --- Blacklist: Tài khoản bị chặn, giao dịch bị block ngay ---
         self._blacklist: set[str] = {
-            "ACC_666", "ACC_999", "MULE_001", "MULE_002"
+            "ACC_666", "ACC_999", "MULE_001", "MULE_002", "MULE_003"
         }
         
         # --- Risk Scores: Điểm rủi ro mỗi tài khoản (0.0 = safe, 1.0 = fraud) ---
@@ -63,6 +63,7 @@ class RedisSimulator:
             "ACC_999": 0.99,
             "MULE_001": 0.92,
             "MULE_002": 0.88,
+            "MULE_003": 0.85,
         }
         
         # --- Velocity tracking: Đếm số GD trong 1h, 24h ---
@@ -115,6 +116,12 @@ class RedisSimulator:
             self._whitelist.discard(account_id)
         else:
             self._blacklist.discard(account_id)
+    
+    def increment_velocity(self, account_id: str):
+        """Tăng velocity counter khi có giao dịch mới."""
+        if account_id not in self._velocity:
+            self._velocity[account_id] = []
+        self._velocity[account_id].append(datetime.now().isoformat())
     
     def update_risk_score(self, account_id: str, score: float):
         """Cập nhật risk score (Phase 3)"""
@@ -185,6 +192,54 @@ class DynamoDBSimulator:
                 "avg_transaction_amount": 1500.0,
                 "typical_channels": ["mobile", "web", "atm"],
                 "typical_locations": ["Ho Chi Minh City", "Hanoi", "Singapore"],
+                "risk_category": "high",
+            },
+            "ACC_002": {
+                "customer_id": "ACC_002",
+                "name": "Trần Minh Tuấn",
+                "account_type": "personal",
+                "kyc_status": "verified",
+                "account_age_days": 1095,
+                "avg_monthly_transactions": 8,
+                "avg_transaction_amount": 400.0,
+                "typical_channels": ["mobile", "web"],
+                "typical_locations": ["Ho Chi Minh City"],
+                "risk_category": "low",
+            },
+            "ACC_666": {
+                "customer_id": "ACC_666",
+                "name": "Blocked Account",
+                "account_type": "personal",
+                "kyc_status": "verified",
+                "account_age_days": 365,
+                "avg_monthly_transactions": 0,
+                "avg_transaction_amount": 0.0,
+                "typical_channels": [],
+                "typical_locations": ["Unknown"],
+                "risk_category": "critical",
+            },
+            "MULE_002": {
+                "customer_id": "MULE_002",
+                "name": "Lê Thị Y",
+                "account_type": "checking",
+                "kyc_status": "verified",
+                "account_age_days": 75,
+                "avg_monthly_transactions": 40,
+                "avg_transaction_amount": 1200.0,
+                "typical_channels": ["mobile", "web"],
+                "typical_locations": ["Ho Chi Minh City", "Hanoi"],
+                "risk_category": "high",
+            },
+            "MULE_003": {
+                "customer_id": "MULE_003",
+                "name": "Ngô Văn Z",
+                "account_type": "checking",
+                "kyc_status": "verified",
+                "account_age_days": 60,
+                "avg_monthly_transactions": 35,
+                "avg_transaction_amount": 1000.0,
+                "typical_channels": ["mobile"],
+                "typical_locations": ["Ho Chi Minh City"],
                 "risk_category": "high",
             },
         }

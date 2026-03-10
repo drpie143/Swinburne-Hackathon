@@ -131,6 +131,9 @@ def phase1_screening(state: GraphState) -> GraphState:
     triggered_rules: list[RuleDetail] = []
     risk_score = 0.0
     
+    # ─── Increment velocity counter (ref: fraud-detection/phase1.py Check 4) ───
+    redis_service.increment_velocity(txn.sender_id)
+    
     # ─── Rule 1: Blacklist check ───
     if redis_service.is_blacklisted(txn.sender_id):
         triggered_rules.append(RuleDetail(
@@ -615,7 +618,10 @@ def detective_node(state: GraphState) -> GraphState:
     report_dict["evidence"] = evidence
     report = InvestigationReport(**report_dict)
     
-    result = _detective.adjudicate(report)
+    # Pass sender_id từ transaction state làm fallback
+    txn_sender_id = state.get("transaction", {}).get("sender_id", "")
+    
+    result = _detective.adjudicate(report, sender_id_fallback=txn_sender_id)
     
     return {
         "decision": result.model_dump(),
@@ -826,6 +832,16 @@ class FraudDetectionOrchestrator:
                 print(f"{'─'*70}")
         
         print()
+        
+        # ─── Store audit trail to Redis (ref: fraud-detection/phase1.py._finalize) ───
+        redis_service.store_transaction_result(transaction.transaction_id, {
+            "decision": decision,
+            "confidence": str(final_state.get("decision", {}).get("confidence", 0)),
+            "sender": transaction.sender_id,
+            "receiver": transaction.receiver_id,
+            "amount": str(transaction.amount),
+            "timestamp": datetime.now().isoformat(),
+        })
         
         return final_state
     

@@ -267,6 +267,8 @@ class RedisService:
             daily_count = self._real_redis.incr(daily_key)
             if daily_count == 1:
                 self._real_redis.expire(daily_key, 86400)
+        else:
+            self._simulator.increment_velocity(account_id)
     
     # =================================================================
     # AUDIT TRAIL (store transaction results)
@@ -300,7 +302,7 @@ class RedisService:
         # ─── 1. Account Profiles ───
         accounts = {
             "ACC_001": {"name": "Nguyễn Văn An",   "type": "savings",  "created_at": "2023-01-15", "country": "VN", "status": "active"},
-            "ACC_002": {"name": "Bob Tran",         "type": "personal", "created_at": "2023-03-22", "country": "VN", "status": "active"},
+            "ACC_002": {"name": "Trần Minh Tuấn",   "type": "personal", "created_at": "2023-03-22", "country": "VN", "status": "active"},
             "ACC_003": {"name": "Charlie Le",       "type": "business", "created_at": "2022-11-10", "country": "VN", "status": "active"},
             "ACC_004": {"name": "Diana Pham",       "type": "personal", "created_at": "2023-06-05", "country": "AU", "status": "active"},
             "ACC_005": {"name": "Ethan Vo",         "type": "business", "created_at": "2022-08-20", "country": "AU", "status": "active"},
@@ -356,7 +358,29 @@ class RedisService:
             })
         print(f"      📊 Seeded risk scores for {len(risk_scores)} accounts")
         
-        # ─── 5. Screening Rules ───
+        # ─── 5. Velocity Counters (cho demo scenarios) ───
+        # ACC_007: 15 GD/h (structuring pattern)
+        hourly_key_007 = "velocity:ACC_007:hourly"
+        for _ in range(15):
+            r.incr(hourly_key_007)
+        r.expire(hourly_key_007, 3600)
+        daily_key_007 = "velocity:ACC_007:daily"
+        for _ in range(15):
+            r.incr(daily_key_007)
+        r.expire(daily_key_007, 86400)
+        
+        # ACC_050: 8 GD/h (suspicious frequency)
+        hourly_key_050 = "velocity:ACC_050:hourly"
+        for _ in range(8):
+            r.incr(hourly_key_050)
+        r.expire(hourly_key_050, 3600)
+        daily_key_050 = "velocity:ACC_050:daily"
+        for _ in range(8):
+            r.incr(daily_key_050)
+        r.expire(daily_key_050, 86400)
+        print(f"      ⏱️  Seeded velocity counters (ACC_007: 15/h, ACC_050: 8/h)")
+        
+        # ─── 6. Screening Rules ───
         r.hset("rules:velocity", mapping={
             "max_transactions_per_hour": "5",
             "max_transactions_per_day": "20",
