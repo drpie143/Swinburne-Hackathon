@@ -46,7 +46,7 @@ from models import (
     InvestigationReport, DecisionResult,
     RiskLevel, FinalDecision, TaskType,
 )
-from simulators import redis_sim
+from redis_service import redis_service
 from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
@@ -132,7 +132,7 @@ def phase1_screening(state: GraphState) -> GraphState:
     risk_score = 0.0
     
     # ─── Rule 1: Blacklist check ───
-    if redis_sim.is_blacklisted(txn.sender_id):
+    if redis_service.is_blacklisted(txn.sender_id):
         triggered_rules.append(RuleDetail(
             rule="SENDER_BLACKLISTED",
             severity="critical",
@@ -140,7 +140,7 @@ def phase1_screening(state: GraphState) -> GraphState:
         ))
         risk_score += 0.5
     
-    if redis_sim.is_blacklisted(txn.receiver_id):
+    if redis_service.is_blacklisted(txn.receiver_id):
         triggered_rules.append(RuleDetail(
             rule="RECEIVER_BLACKLISTED",
             severity="critical",
@@ -149,7 +149,7 @@ def phase1_screening(state: GraphState) -> GraphState:
         risk_score += 0.3
     
     # ─── Rule 2: Risk score hiện tại ───
-    sender_risk = redis_sim.get_risk_score(txn.sender_id)
+    sender_risk = redis_service.get_risk_score(txn.sender_id)
     if sender_risk > 0.6:
         triggered_rules.append(RuleDetail(
             rule="HIGH_RISK_SCORE",
@@ -161,7 +161,7 @@ def phase1_screening(state: GraphState) -> GraphState:
         risk_score += sender_risk * 0.3
     
     # ─── Rule 3: High velocity ───
-    velocity_1h = redis_sim.get_velocity(txn.sender_id, hours=1)
+    velocity_1h = redis_service.get_velocity(txn.sender_id, hours=1)
     if velocity_1h > 5:
         triggered_rules.append(RuleDetail(
             rule="HIGH_VELOCITY",
@@ -230,20 +230,20 @@ def phase1_screening(state: GraphState) -> GraphState:
     # ─── Account flags ───
     sender_flags = AccountFlags(
         account_id=txn.sender_id,
-        is_whitelisted=redis_sim.is_whitelisted(txn.sender_id),
-        is_blacklisted=redis_sim.is_blacklisted(txn.sender_id),
-        risk_score=redis_sim.get_risk_score(txn.sender_id),
-        velocity_1h=redis_sim.get_velocity(txn.sender_id, hours=1),
-        velocity_24h=redis_sim.get_velocity(txn.sender_id, hours=24),
+        is_whitelisted=redis_service.is_whitelisted(txn.sender_id),
+        is_blacklisted=redis_service.is_blacklisted(txn.sender_id),
+        risk_score=redis_service.get_risk_score(txn.sender_id),
+        velocity_1h=redis_service.get_velocity(txn.sender_id, hours=1),
+        velocity_24h=redis_service.get_velocity(txn.sender_id, hours=24),
     )
     
     receiver_flags = AccountFlags(
         account_id=txn.receiver_id,
-        is_whitelisted=redis_sim.is_whitelisted(txn.receiver_id),
-        is_blacklisted=redis_sim.is_blacklisted(txn.receiver_id),
-        risk_score=redis_sim.get_risk_score(txn.receiver_id),
-        velocity_1h=redis_sim.get_velocity(txn.receiver_id, hours=1),
-        velocity_24h=redis_sim.get_velocity(txn.receiver_id, hours=24),
+        is_whitelisted=redis_service.is_whitelisted(txn.receiver_id),
+        is_blacklisted=redis_service.is_blacklisted(txn.receiver_id),
+        risk_score=redis_service.get_risk_score(txn.receiver_id),
+        velocity_1h=redis_service.get_velocity(txn.receiver_id, hours=1),
+        velocity_24h=redis_service.get_velocity(txn.receiver_id, hours=24),
     )
     
     # ─── Routing decision ───
@@ -371,8 +371,8 @@ def end_block(state: GraphState) -> GraphState:
     
     # Phase 3 enforcement (auto-block)
     if sender_id:
-        redis_sim.update_blacklist(sender_id, add=True)
-        redis_sim.update_risk_score(sender_id, 0.95)
+        redis_service.update_blacklist(sender_id, add=True)
+        redis_service.update_risk_score(sender_id, 0.95)
         print(f"   → Blacklisted: {sender_id}")
     
     return {
@@ -737,6 +737,7 @@ class FraudDetectionOrchestrator:
         
         # ─── Seed databases ───
         print("\n📊 Seeding databases...")
+        redis_service.seed_data()
         neo4j_client.seed_demo_data()
         vector_store.seed_knowledge_base()
         mongodb_client.seed_demo_data()
@@ -749,8 +750,8 @@ class FraudDetectionOrchestrator:
         self._initialized = True
         
         print("\n✅ System ready!")
+        print(f"   Redis: {'Cloud (' + settings.redis_host + ')' if redis_service.is_connected else 'Simulator (in-memory)'}")
         print(f"   Neo4j: {'AuraDB (cloud)' if neo4j_client.is_connected else 'Simulator (in-memory)'}")
-        print(f"   ChromaDB: Cloud (trychroma.com)")
         print(f"   MongoDB: {'Atlas (cloud)' if mongodb_client.is_connected else 'Simulator (in-memory)'}")
         print(f"   LLM (ALL agents): Gemini {'(connected)' if settings.gemini_api_key else '(fallback)'}")
         print("=" * 70 + "\n")

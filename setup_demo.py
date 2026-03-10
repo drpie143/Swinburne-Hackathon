@@ -3,6 +3,7 @@
 # ====================================================================
 #
 # Script này tạo DỮ LIỆU GIẢ LẬP và đẩy lên:
+#   0. Redis Cloud   → Phase 1 data (whitelist, blacklist, risk scores, rules)
 #   1. Neo4j AuraDB  → Graph data (accounts, devices, IPs, relationships)
 #   2. MongoDB Atlas  → Customer profiles + Transaction history
 #   3. ChromaDB Cloud → Fraud patterns knowledge base (trychroma.com)
@@ -293,10 +294,131 @@ CHROMA_DOCUMENTS = [
 # PUSH FUNCTIONS
 # ─────────────────────────────────────────────────────────────
 
+def push_redis():
+    """Đẩy Phase 1 data lên Redis Cloud."""
+    print("\n" + "─" * 55)
+    print("🔑 [0/4] REDIS CLOUD - Phase 1 Screening Data")
+    print("─" * 55)
+
+    from config import settings
+    if not settings.redis_password or settings.redis_host == "localhost":
+        print("  ⏭️  SKIP: Chưa cấu hình REDIS_HOST/REDIS_PASSWORD trong .env")
+        print("  → Hệ thống sẽ dùng RedisSimulator (in-memory)")
+        return False
+
+    try:
+        import redis
+        r = redis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            decode_responses=True,
+            username=settings.redis_username,
+            password=settings.redis_password,
+        )
+        r.ping()
+        print(f"  ✅ Connected: {settings.redis_host}:{settings.redis_port}")
+    except Exception as e:
+        print(f"  ❌ Không kết nối được Redis: {e}")
+        return False
+
+    # Clear old Phase 1 data (selective — chỉ xóa keys Phase 1)
+    for pattern in ["account:*", "whitelist:*", "risk_score:*",
+                    "velocity:*", "rules:*", "txn:result:*"]:
+        for key in r.scan_iter(match=pattern):
+            r.delete(key)
+    r.delete("blacklist")
+    print("  🗑️  Cleared old Phase 1 data")
+
+    # ─── Account Profiles ───
+    accounts = {
+        "ACC_001": {"name": "Nguyễn Văn An",      "type": "savings",  "created_at": "2023-01-15", "country": "VN", "status": "active"},
+        "ACC_002": {"name": "Trần Minh Tuấn",     "type": "personal", "created_at": "2023-03-22", "country": "VN", "status": "active"},
+        "ACC_003": {"name": "Charlie Le",          "type": "business", "created_at": "2022-11-10", "country": "VN", "status": "active"},
+        "ACC_004": {"name": "Diana Pham",          "type": "personal", "created_at": "2023-06-05", "country": "AU", "status": "active"},
+        "ACC_005": {"name": "Ethan Vo",            "type": "business", "created_at": "2022-08-20", "country": "AU", "status": "active"},
+        "ACC_007": {"name": "Trần Thị B",          "type": "checking", "created_at": "2025-11-01", "country": "VN", "status": "active"},
+        "ACC_008": {"name": "Nguyễn Thị D",        "type": "savings",  "created_at": "2023-08-12", "country": "VN", "status": "active"},
+        "ACC_009": {"name": "Lê Văn C",            "type": "checking", "created_at": "2024-01-20", "country": "VN", "status": "active"},
+        "ACC_010": {"name": "Julia Mai",            "type": "personal", "created_at": "2023-07-14", "country": "AU", "status": "active"},
+        "ACC_050": {"name": "Unknown Entity",       "type": "business", "created_at": "2025-12-15", "country": "XX", "status": "active"},
+    }
+    for acc_id, profile in accounts.items():
+        r.hset(f"account:{acc_id}", mapping=profile)
+    print(f"  ✅ {len(accounts)} account profiles")
+
+    # ─── Per-Account Whitelists with Trust Scores ───
+    whitelists = {
+        "ACC_001": {"ACC_002": "90", "ACC_003": "85", "ACC_005": "70", "ACC_010": "75"},
+        "ACC_002": {"ACC_001": "95", "ACC_004": "80"},
+        "ACC_003": {"ACC_001": "85", "ACC_005": "90"},
+        "ACC_004": {"ACC_002": "75", "ACC_007": "85", "ACC_010": "90"},
+        "ACC_005": {"ACC_003": "90", "ACC_001": "70"},
+        "ACC_010": {"ACC_001": "85", "ACC_004": "90"},
+    }
+    for acc_id, trusted in whitelists.items():
+        r.hset(f"whitelist:{acc_id}", mapping=trusted)
+    print(f"  ✅ Whitelists for {len(whitelists)} accounts")
+
+    # ─── System-wide Blacklist ───
+    blacklisted = ["ACC_666", "ACC_999", "MULE_001", "MULE_002", "MULE_003"]
+    for acc in blacklisted:
+        r.sadd("blacklist", acc)
+    fraud_accounts = {
+        "ACC_666": {"name": "Blocked Account",      "type": "personal", "status": "blocked"},
+        "ACC_999": {"name": "Scam Operator",         "type": "personal", "status": "blocked"},
+        "MULE_001": {"name": "Phạm Văn X (Mule)",   "type": "checking", "status": "blocked"},
+        "MULE_002": {"name": "Lê Thị Y (Mule)",     "type": "checking", "status": "blocked"},
+        "MULE_003": {"name": "Ngô Văn Z (Mule)",    "type": "checking", "status": "blocked"},
+    }
+    for acc_id, profile in fraud_accounts.items():
+        r.hset(f"account:{acc_id}", mapping=profile)
+    print(f"  ✅ {len(blacklisted)} blacklisted accounts")
+
+    # ─── Risk Scores ───
+    risk_scores = {
+        "ACC_001": 0.05, "ACC_002": 0.10, "ACC_003": 0.15,
+        "ACC_004": 0.08, "ACC_005": 0.12, "ACC_007": 0.65,
+        "ACC_010": 0.02, "ACC_050": 0.78,
+        "ACC_666": 0.95, "ACC_999": 0.99,
+        "MULE_001": 0.92, "MULE_002": 0.88, "MULE_003": 0.85,
+    }
+    now_iso = datetime.now().isoformat()
+    for acc_id, score in risk_scores.items():
+        r.hset(f"risk_score:{acc_id}", mapping={"score": str(score), "updated_at": now_iso})
+    print(f"  ✅ Risk scores for {len(risk_scores)} accounts")
+
+    # ─── Screening Rules ───
+    r.hset("rules:velocity", mapping={
+        "max_transactions_per_hour": "5",
+        "max_transactions_per_day": "20",
+        "max_amount_per_day": "250000000",
+    })
+    r.hset("rules:amount_threshold", mapping={
+        "instant_allow_max": "1000000",
+        "escalate_threshold": "20000000",
+        "instant_block_threshold": "2000000000",
+        "currency": "VND",
+    })
+    print(f"  ✅ Screening rules (velocity + amount thresholds)")
+
+    # Simulate velocity for suspicious accounts
+    for _ in range(15):
+        r.incr("velocity:ACC_007:hourly")
+    r.expire("velocity:ACC_007:hourly", 3600)
+    for _ in range(8):
+        r.incr("velocity:ACC_050:hourly")
+    r.expire("velocity:ACC_050:hourly", 3600)
+    print(f"  ✅ Velocity counters (ACC_007: 15/h, ACC_050: 8/h)")
+
+    total_keys = r.dbsize()
+    print(f"\n  📊 TỔNG: {total_keys} keys in Redis")
+    return True
+
+
 def push_neo4j():
     """Đẩy graph data lên Neo4j AuraDB."""
     print("\n" + "─" * 55)
-    print("📊 [1/3] NEO4J AURADB - Graph Data")
+    print("📊 [1/4] NEO4J AURADB - Graph Data")
     print("─" * 55)
 
     from config import settings
@@ -365,7 +487,7 @@ def push_neo4j():
 def push_mongodb():
     """Đẩy profiles + transactions lên MongoDB Atlas."""
     print("\n" + "─" * 55)
-    print("📦 [2/3] MONGODB ATLAS - Document Data")
+    print("📦 [2/4] MONGODB ATLAS - Document Data")
     print("─" * 55)
 
     from config import settings
@@ -420,7 +542,7 @@ def push_mongodb():
 def push_chromadb():
     """Đẩy fraud knowledge vào ChromaDB Cloud (trychroma.com)."""
     print("\n" + "─" * 55)
-    print("🔍 [3/3] CHROMADB - Fraud Knowledge Base (cloud)")
+    print("🔍 [3/4] CHROMADB - Fraud Knowledge Base (cloud)")
     print("─" * 55)
 
     try:
@@ -496,6 +618,7 @@ def main():
     results = {}
 
     # Push data
+    results["Redis"] = push_redis()
     results["Neo4j"] = push_neo4j()
     results["MongoDB"] = push_mongodb()
     results["ChromaDB"] = push_chromadb()
@@ -510,9 +633,9 @@ def main():
         print(f"  {icon} {name}: {status}")
 
     ok_count = sum(1 for v in results.values() if v)
-    print(f"\n  → {ok_count}/3 databases đã có data thật")
+    print(f"\n  → {ok_count}/4 databases đã có data thật")
 
-    if ok_count < 3:
+    if ok_count < 4:
         print("\n  ⚠️  Các DB chưa push sẽ dùng SIMULATOR (data giả lập in-memory)")
         print("  → Demo vẫn chạy OK, chỉ không query DB thật")
 
