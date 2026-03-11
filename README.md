@@ -1,12 +1,12 @@
-# 🏦 Fraud Detection System — Zero-Cost Agentic AI
+# 🏦 Fraud Detection System — Agentic AI
 
-Hệ thống phát hiện gian lận ngân hàng sử dụng **multi-agent AI pipeline**.
+A **multi-agent AI pipeline** for real-time bank fraud detection, built entirely on **free-tier cloud services**.
 
-5 AI agents phối hợp qua LangGraph để sàng lọc, điều tra và ra quyết định cho mỗi giao dịch theo 3 phase: **Rule-Based Screening → AI Investigation → Enforcement**.
+Five specialized AI agents collaborate through LangGraph to screen, investigate, and adjudicate every transaction across a 3-phase architecture: **Rule-Based Screening → AI Investigation → Enforcement**.
 
 ---
 
-## 🏗️ Kiến trúc
+## 🏗️ Architecture
 
 ```
                          Transaction
@@ -36,33 +36,33 @@ Hệ thống phát hiện gian lận ngân hàng sử dụng **multi-agent AI pi
               └──────────────────────┘
 ```
 
-### Pipeline chi tiết
+### Pipeline Details
 
-| Phase | Mô tả | Công nghệ |
-|-------|--------|-----------|
-| **Phase 1** | Sàng lọc real-time: whitelist/blacklist, risk score, velocity, amount threshold, VPN/Tor detection | Redis Cloud |
-| **Phase 2** | Điều tra AI (chỉ cho YELLOW): Planner tạo hypothesis → Executor truy vấn DB → Vision phân tích chéo → Report tạo báo cáo → Detective ra quyết định | Gemini 2.5 Flash, Neo4j, MongoDB, ChromaDB |
-| **Phase 3** | Thực thi: BLOCK → blacklist + tăng risk score + lưu pattern. ALLOW → whitelist + giảm risk score. ESCALATE → hold + chuyển human review | Redis Cloud, ChromaDB |
+| Phase | Description | Technology |
+|-------|-------------|------------|
+| **Phase 1** | Real-time screening: whitelist/blacklist checks, risk scoring, velocity tracking, amount thresholds, VPN/Tor detection | Redis Cloud |
+| **Phase 2** | AI investigation (YELLOW only): Planner generates hypothesis → Executor queries DBs → Vision cross-references evidence → Report generates audit report → Detective makes final decision | Gemini 2.5 Flash, Neo4j, MongoDB, ChromaDB |
+| **Phase 3** | Enforcement: BLOCK → blacklist + increase risk score + index pattern. ALLOW → whitelist + decrease risk score. ESCALATE → hold + route to human review | Redis Cloud, ChromaDB |
 
 ---
 
 ## 🤖 5 AI Agents
 
-| Agent | Vai trò |
-|-------|---------|
-| **Planner** | Phân tích context Phase 1, tạo giả thuyết (structuring, money laundering, ATO), phân rã thành investigation tasks |
-| **Executor** | AI Agent thật sự — Gemini sinh Cypher/MongoDB/ChromaDB query tự động, chạy qua 12 DB tools, phân tích kết quả |
-| **Vision** | Phân tích chéo tất cả evidence từ Executor, phát hiện pattern mà từng task riêng lẻ không thấy được |
-| **Report** | Tạo báo cáo điều tra chi tiết bằng ngôn ngữ tự nhiên (audit-ready) |
-| **Detective** | Thẩm phán cuối cùng — đánh giá ĐỘC LẬP, ra quyết định BLOCK/ALLOW/ESCALATE, thực thi Phase 3 |
+| Agent | Role |
+|-------|------|
+| **Planner** | Analyzes Phase 1 context, generates hypotheses (structuring, money laundering, ATO), decomposes into specific investigation tasks |
+| **Executor** | True AI agent — Gemini autonomously generates Cypher/MongoDB/ChromaDB queries, executes via 12 pre-defined DB tools, analyzes raw results |
+| **Vision** | Cross-references all evidence from Executor, detects patterns invisible to individual tasks (e.g., star topology + structuring = mule network) |
+| **Report** | Generates detailed, audit-ready investigation reports in natural language |
+| **Detective** | Final adjudicator — independently evaluates the report, makes BLOCK/ALLOW/ESCALATE decision, triggers Phase 3 enforcement |
 
 ---
 
-## ⚡ Tech Stack
+## ⚡ Tech Stack (Zero-Cost)
 
-| Thành phần | Công nghệ | Thay thế |
-|------------|-----------|----------|
-| LLM (tất cả agents) | Google Gemini 2.5 Flash (free: 15 req/min) | AWS Bedrock |
+| Component | Technology | Replaces |
+|-----------|-----------|----------|
+| LLM (all agents) | Google Gemini 2.5 Flash (free: 15 req/min) | AWS Bedrock |
 | Graph DB | Neo4j AuraDB (free: 200K nodes) | Amazon Neptune |
 | Vector Store / RAG | ChromaDB Cloud (trychroma.com) | Amazon OpenSearch |
 | Document DB | MongoDB Atlas (M0 free: 512MB) | Amazon DynamoDB |
@@ -73,14 +73,14 @@ Hệ thống phát hiện gian lận ngân hàng sử dụng **multi-agent AI pi
 
 ---
 
-## 📁 Cấu trúc Project
+## 📁 Project Structure
 
 ```
-├── main.py                 # Entrypoint: CLI demo + FastAPI server
-├── config.py               # Quản lý environment variables
-├── models.py               # Pydantic models (Transaction, Phase1Result, ...)
+├── main.py                  # Entrypoint: CLI demo + FastAPI server
+├── config.py                # Environment variable management
+├── models.py                # Pydantic models (Transaction, Phase1Result, ...)
 ├── orchestrator.py          # LangGraph pipeline (Phase 1 → 2 → 3)
-├── llm_providers.py         # Gemini 2.5 Flash wrapper
+├── llm_providers.py         # Gemini 2.5 Flash wrapper (shared by all agents)
 ├── planner_agent.py         # Planner Agent
 ├── executor_agent.py        # Executor Agent (AI-driven, 12 DB tools)
 ├── vision_agent.py          # Vision Agent (cross-reference analysis)
@@ -90,17 +90,17 @@ Hệ thống phát hiện gian lận ngân hàng sử dụng **multi-agent AI pi
 ├── mongo_db.py              # MongoDB Atlas client
 ├── vector_store.py          # ChromaDB Cloud client
 ├── simulators.py            # In-memory simulators + RedisService
-├── setup_demo.py            # Seed demo data vào 4 databases
-├── requirements.txt         # Dependencies
-├── .env.example             # Template environment variables
+├── setup_demo.py            # Seed synthetic demo data to all databases
+├── requirements.txt         # Python dependencies
+├── .env.example             # Environment variable template
 └── .gitignore
 ```
 
 ---
 
-## 🚀 Cài đặt & Chạy
+## 🚀 Getting Started
 
-### 1. Clone & tạo virtual environment
+### 1. Clone & Create Virtual Environment
 
 ```bash
 git clone https://github.com/drpie143/Swinburne-Hackathon.git
@@ -112,48 +112,48 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Cài dependencies
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Cấu hình environment variables
+### 3. Configure Environment Variables
 
 ```bash
 cp .env.example .env
 ```
 
-Mở `.env` và điền API keys:
+Edit `.env` and fill in your API keys:
 
-| Biến | Bắt buộc | Mô tả |
-|------|----------|-------|
+| Variable | Required | Description |
+|----------|----------|-------------|
 | `GEMINI_API_KEY` | ✅ | Google AI Studio → [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| `NEO4J_URI` | ✅ | Neo4j AuraDB URI (format: `neo4j+ssc://xxx.databases.neo4j.io`) |
+| `NEO4J_URI` | ✅ | Neo4j AuraDB URI (`neo4j+ssc://xxx.databases.neo4j.io`) |
 | `NEO4J_USER` | ✅ | Neo4j username |
 | `NEO4J_PASSWORD` | ✅ | Neo4j password |
 | `CHROMA_API_KEY` | ✅ | ChromaDB Cloud API key |
 | `CHROMA_TENANT` | ✅ | ChromaDB tenant ID |
 | `CHROMA_DATABASE` | ✅ | ChromaDB database name |
 | `MONGODB_URI` | ✅ | MongoDB Atlas connection string |
-| `REDIS_HOST` | ⚪ | Redis Cloud host (bỏ qua → dùng simulator) |
+| `REDIS_HOST` | ⚪ | Redis Cloud host (omit to use simulator) |
 | `REDIS_PASSWORD` | ⚪ | Redis Cloud password |
 
-> **Demo Mode**: Nếu thiếu credentials, hệ thống tự fallback về in-memory simulators — vẫn chạy demo được mà không cần bất kỳ cloud service nào.
+> **Demo Mode**: If credentials are missing, the system automatically falls back to in-memory simulators — the demo runs fully offline without any cloud services.
 
-### 4. Seed demo data
+### 4. Seed Demo Data
 
 ```bash
 python setup_demo.py
 ```
 
-### 5. Chạy
+### 5. Run
 
 ```bash
-# CLI Demo — chạy 3 scenarios
+# CLI Demo — runs all 3 scenarios
 python main.py
 
-# API Server — FastAPI trên http://localhost:8000
+# API Server — FastAPI on http://localhost:8000
 python main.py --serve
 ```
 
@@ -161,38 +161,38 @@ python main.py --serve
 
 ## 🎯 Demo Scenarios
 
-| # | Tên | Giao dịch | Kết quả mong đợi |
-|---|-----|-----------|-------------------|
-| 1 | **Normal Transaction** | ACC_001 (whitelisted, 5 năm) → ACC_002, $250 | 🟢 GREEN → ALLOW |
-| 2 | **Structuring Pattern** | ACC_007 (45 ngày, velocity cao, 15 GD <$1000/1h) → ACC_002, $950 | 🟡 YELLOW → Investigation → BLOCK |
-| 3 | **Money Laundering** | ACC_050 (15 ngày, KYC pending, VPN/Tor) → ACC_666 (blacklisted), $25,000 | 🔴 RED → BLOCK |
+| # | Name | Transaction | Expected Result |
+|---|------|-------------|-----------------|
+| 1 | **Normal Transaction** | ACC_001 (whitelisted, 5yr account) → ACC_002, $250 | 🟢 GREEN → ALLOW |
+| 2 | **Structuring Pattern** | ACC_007 (45-day account, high velocity, 15 txns <$1000/1hr) → ACC_002, $950 | 🟡 YELLOW → Investigation → BLOCK |
+| 3 | **Money Laundering** | ACC_050 (15-day account, KYC pending, VPN/Tor) → ACC_666 (blacklisted), $25,000 | 🔴 RED → BLOCK |
 
 ---
 
 ## 🔌 API Endpoints
 
-| Method | Endpoint | Mô tả |
-|--------|----------|-------|
-| `GET` | `/` | Thông tin API |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | API information |
 | `GET` | `/health` | Health check |
-| `POST` | `/transaction` | Xử lý 1 giao dịch |
-| `GET` | `/scenarios` | Danh sách demo scenarios |
-| `POST` | `/demo/{n}` | Chạy demo scenario 1-3 |
+| `POST` | `/transaction` | Process a single transaction |
+| `GET` | `/scenarios` | List available demo scenarios |
+| `POST` | `/demo/{n}` | Run demo scenario 1–3 |
 
 ---
 
 ## 🔄 Fallback & Demo Mode
 
-Tất cả DB clients đều có in-memory simulator làm fallback:
+All database clients include in-memory simulators as fallback:
 
 | Cloud Service | Simulator Fallback |
 |---------------|-------------------|
-| Redis Cloud | `RedisSimulator` (whitelist, blacklist, risk scores, velocity) |
-| Neo4j AuraDB | `NeptuneSimulator` (graph nodes, edges, shared entities) |
-| MongoDB Atlas | `DynamoDBSimulator` (customer profiles, transaction history) |
-| ChromaDB Cloud | `OpenSearchSimulator` (fraud patterns, past cases) |
+| Redis Cloud | `RedisSimulator` — whitelist, blacklist, risk scores, velocity |
+| Neo4j AuraDB | `NeptuneSimulator` — graph nodes, edges, shared entities |
+| MongoDB Atlas | `DynamoDBSimulator` — customer profiles, transaction history |
+| ChromaDB Cloud | `OpenSearchSimulator` — fraud patterns, past cases |
 
-Khi `DEMO_MODE=true` hoặc thiếu credentials → hệ thống tự động dùng simulator, demo chạy hoàn toàn offline.
+When `DEMO_MODE=true` or credentials are missing, the system automatically uses simulators — fully offline, no external services required.
 
 ---
 
