@@ -120,6 +120,33 @@ class GeminiProvider:
         Returns:
             Parsed JSON dict, hoặc {} nếu parse fail
         """
+        if not self.model:
+            raw = self._fallback_response(f"{system_prompt}\n\n{user_message}")
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return self._fallback_json(system_prompt)
+        
+        prompt = f"{system_prompt}\n\n{user_message}"
+        
+        # Dùng response_mime_type để buộc Gemini trả JSON thuần
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature if temperature is not None else 0.1,
+                    max_output_tokens=4096,
+                    response_mime_type="application/json",
+                ),
+            )
+            raw = response.text or ""
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        except Exception as e:
+            print(f"⚠️  Gemini JSON mode error: {e}")
+        
+        # Fallback: gọi bình thường rồi parse
         raw = self.chat(
             system_prompt=system_prompt,
             user_message=user_message,

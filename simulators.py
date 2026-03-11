@@ -925,6 +925,10 @@ class RedisService:
         r = self._real_redis
         print("   📊 Seeding Redis Cloud data...")
         
+        # ─── 0. Xóa dữ liệu cũ (tránh blacklist/velocity tồn đọng từ lần chạy trước) ───
+        r.flushdb()
+        print("      🧹 Đã xóa dữ liệu Redis cũ")
+        
         # ─── 1. Account Profiles ───
         accounts = {
             "ACC_001": {"name": "Nguyễn Văn An",   "type": "savings",  "created_at": "2023-01-15", "country": "VN", "status": "active"},
