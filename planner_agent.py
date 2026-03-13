@@ -79,7 +79,9 @@ RESPONSE FORMAT (JSON):
             "depends_on": []
         }
     ]
-}"""
+}
+
+CHỈ TRẢ JSON HỢP LỆ. KHÔNG thêm text, KHÔNG markdown, KHÔNG giải thích ngoài JSON."""
 
 EVALUATE_SYSTEM_PROMPT = """Bạn là PLANNER AGENT đang ĐÁNH GIÁ bằng chứng thu thập được.
 
@@ -106,7 +108,9 @@ RESPONSE FORMAT (JSON):
             "priority": 1-10
         }
     ]
-}"""
+}
+
+CHỈ TRẢ JSON HỢP LỆ. KHÔNG thêm text, KHÔNG markdown, KHÔNG giải thích ngoài JSON."""
 
 
 class PlannerAgent:

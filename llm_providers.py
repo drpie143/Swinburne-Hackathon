@@ -171,11 +171,46 @@ class GeminiProvider:
                     return json.loads(json_str)
                 except (json.JSONDecodeError, IndexError):
                     pass
+
+        # Thử extract JSON object từ chuỗi tự do (thinking/markdown)
+        extracted = self._extract_json_object(raw)
+        if extracted is not None:
+            return extracted
         
         print(f"⚠️  Không parse được JSON từ Gemini response")
         
         # Fallback cho các agent cụ thể
         return self._fallback_json(system_prompt)
+
+    def _extract_json_object(self, text: str) -> Optional[dict]:
+        """Thử lấy JSON object hợp lệ từ chuỗi có thể lẫn text."""
+        if not text:
+            return None
+
+        start = text.find("{")
+        if start == -1:
+            return None
+
+        depth = 0
+        end = -1
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+
+        if end == -1:
+            return None
+
+        candidate = text[start:end + 1]
+        try:
+            return json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            return None
     
     def analyze_image(
         self,
