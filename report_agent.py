@@ -15,7 +15,7 @@ from __future__ import annotations
 from models import (
     InvestigationReport, ExecutorResult, FinalDecision, TaskType
 )
-from llm_providers import gemini_provider
+from llm_providers import gemini_provider_report as gemini_provider
 
 
 REPORT_PROMPT_TEMPLATE = """Bạn là REPORT GENERATING AGENT trong hệ thống phát hiện gian lận ngân hàng.

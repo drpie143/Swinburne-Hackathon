@@ -32,11 +32,17 @@ class Settings(BaseModel):
     # Neo4j + ChromaDB + Gemini luôn dùng thật (miễn phí)
     demo_mode: bool = True
     
-    # --- Gemini 2.5 Flash (TẤT CẢ Agents) ---
-    # Free tier: 15 req/min, 1,500 req/day
-    # Dùng cho: Planner, Detective, Vision, Report - TẤT CẢ agents
+    # --- Gemini 2.5 Flash ---
+    # Free tier: 15 req/min, 1,500 req/day per key
+    # Mỗi agent dùng API key riêng để tránh hết quota khi demo
+    # Nếu key riêng trống → fallback về gemini_api_key chung
     gemini_api_key: str = ""
     gemini_model_id: str = "gemini-2.5-flash"
+    gemini_api_key_planner: str = ""
+    gemini_api_key_executor: str = ""
+    gemini_api_key_detective: str = ""
+    gemini_api_key_vision: str = ""
+    gemini_api_key_report: str = ""
     
     # --- Neo4j AuraDB (Thay thế Amazon Neptune) ---
     # Free forever tier: 200K nodes, 400K relationships
@@ -92,6 +98,11 @@ def get_settings() -> Settings:
         demo_mode=os.getenv("DEMO_MODE", "true").lower() == "true",
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         gemini_model_id=os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash"),
+        gemini_api_key_planner=os.getenv("GEMINI_API_KEY_PLANNER", ""),
+        gemini_api_key_executor=os.getenv("GEMINI_API_KEY_EXECUTOR", ""),
+        gemini_api_key_detective=os.getenv("GEMINI_API_KEY_DETECTIVE", ""),
+        gemini_api_key_vision=os.getenv("GEMINI_API_KEY_VISION", ""),
+        gemini_api_key_report=os.getenv("GEMINI_API_KEY_REPORT", ""),
         neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
         neo4j_user=os.getenv("NEO4J_USER", "neo4j"),
         neo4j_password=os.getenv("NEO4J_PASSWORD", ""),

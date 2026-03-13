@@ -129,7 +129,7 @@ Edit `.env` and fill in your API keys:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GEMINI_API_KEY` | ✅ | Google AI Studio → [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
-| `NEO4J_URI` | ✅ | Neo4j AuraDB URI (`neo4j+ssc://xxx.databases.neo4j.io`) |
+| `NEO4J_URI` | ✅ | Neo4j AuraDB URI (format: `neo4j+ssc://xxx.databases.neo4j.io`) |
 | `NEO4J_USER` | ✅ | Neo4j username |
 | `NEO4J_PASSWORD` | ✅ | Neo4j password |
 | `CHROMA_API_KEY` | ✅ | ChromaDB Cloud API key |

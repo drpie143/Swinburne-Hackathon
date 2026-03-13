@@ -16,7 +16,7 @@ import json
 from models import InvestigationReport, DecisionResult, FinalDecision
 from simulators import redis_service
 from vector_store import vector_store
-from llm_providers import gemini_provider
+from llm_providers import gemini_provider_detective as gemini_provider
 
 
 DETECTIVE_SYSTEM_PROMPT = """Bạn là DETECTIVE AGENT - thẩm phán cuối cùng trong hệ thống phát hiện gian lận ngân hàng.

@@ -28,22 +28,25 @@ class GeminiProvider:
     """
     Wrapper cho Google Gemini 2.5 Flash.
     
-    Gemini 2.5 Flash hỗ trợ:
-    - Text generation (báo cáo, reasoning, planning)
-    - Vision (phân tích ảnh graph từ Neo4j)
-    - Multimodal input
+    Mỗi agent có instance riêng với API key riêng để tránh hết quota.
+    Nếu api_key không truyền vào → fallback về gemini_api_key chung.
     
-    Free tier: 15 req/min, 1,500 req/day
-    Đăng ký: https://aistudio.google.com/apikey
+    Free tier: 15 req/min, 1,500 req/day PER KEY
     """
     
-    def __init__(self):
-        if not settings.gemini_api_key:
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or settings.gemini_api_key
+        if not self.api_key:
             print("⚠️  GEMINI_API_KEY chưa được cấu hình! Agents sẽ dùng fallback.")
             self.model = None
         else:
-            genai.configure(api_key=settings.gemini_api_key)
+            genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(settings.gemini_model_id)
+    
+    def _ensure_configured(self):
+        """Đảm bảo global genai config đang dùng đúng API key của provider này."""
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
     
     def generate(
         self,
@@ -65,6 +68,7 @@ class GeminiProvider:
         if not self.model:
             return self._fallback_response(prompt)
         
+        self._ensure_configured()
         try:
             response = self.model.generate_content(
                 prompt,
@@ -130,6 +134,7 @@ class GeminiProvider:
         prompt = f"{system_prompt}\n\n{user_message}"
         
         # Dùng response_mime_type để buộc Gemini trả JSON thuần
+        self._ensure_configured()
         try:
             response = self.model.generate_content(
                 prompt,
@@ -184,6 +189,7 @@ class GeminiProvider:
         if not self.model:
             return "Vision analysis không khả dụng (thiếu Gemini API key)"
         
+        self._ensure_configured()
         try:
             image_part = {
                 "mime_type": mime_type,
@@ -249,7 +255,17 @@ class GeminiProvider:
 
 
 # =====================================================================
-# SINGLETON INSTANCE - Import từ các module khác
+# PER-AGENT PROVIDER INSTANCES
+# =====================================================================
+# Mỗi agent dùng API key riêng → tránh hết quota khi demo
+# Nếu key riêng trống → fallback về GEMINI_API_KEY chung
 # =====================================================================
 
-gemini_provider = GeminiProvider()
+gemini_provider_planner = GeminiProvider(api_key=settings.gemini_api_key_planner or None)
+gemini_provider_executor = GeminiProvider(api_key=settings.gemini_api_key_executor or None)
+gemini_provider_detective = GeminiProvider(api_key=settings.gemini_api_key_detective or None)
+gemini_provider_vision = GeminiProvider(api_key=settings.gemini_api_key_vision or None)
+gemini_provider_report = GeminiProvider(api_key=settings.gemini_api_key_report or None)
+
+# Backward-compatible default
+gemini_provider = gemini_provider_planner

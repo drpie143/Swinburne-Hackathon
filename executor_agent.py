@@ -27,13 +27,14 @@
 from __future__ import annotations
 import json
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from models import PlannerTask, ExecutorResult, TaskType
 from simulators import redis_service
 from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
-from llm_providers import gemini_provider
+from llm_providers import gemini_provider_executor as gemini_provider
 
 
 # =====================================================================
@@ -215,12 +216,28 @@ class ExecutorAgent:
                 )
 
     def execute_batch(self, tasks: list[PlannerTask]) -> list[ExecutorResult]:
-        """Thực thi batch tasks."""
+        """Thực thi batch tasks song song (parallel API calls)."""
         print(f"\n{'─'*50}")
-        print(f"⚡ EXECUTOR: Batch ({len(tasks)} tasks)")
+        print(f"⚡ EXECUTOR: Batch ({len(tasks)} tasks) — PARALLEL")
         print(f"{'─'*50}")
 
-        results = [self.execute_task(task) for task in tasks]
+        results: list[ExecutorResult] = [None] * len(tasks)
+        with ThreadPoolExecutor(max_workers=min(len(tasks), 5)) as pool:
+            future_to_idx = {
+                pool.submit(self.execute_task, task): idx
+                for idx, task in enumerate(tasks)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as e:
+                    results[idx] = ExecutorResult(
+                        task_id=tasks[idx].task_id,
+                        task_type=tasks[idx].task_type,
+                        success=False,
+                        error_message=f"Parallel exec failed: {e}",
+                    )
 
         success_count = sum(1 for r in results if r.success)
         total_indicators = sum(len(r.risk_indicators) for r in results)

@@ -926,8 +926,8 @@ class RedisService:
         print("   📊 Seeding Redis Cloud data...")
         
         # ─── 0. Xóa dữ liệu cũ (tránh blacklist/velocity tồn đọng từ lần chạy trước) ───
-        r.flushdb()
-        print("      🧹 Đã xóa dữ liệu Redis cũ")
+        #r.flushdb()
+        #print("      🧹 Đã xóa dữ liệu Redis cũ")
         
         # ─── 1. Account Profiles ───
         accounts = {

@@ -31,7 +31,7 @@ import json
 from typing import Optional
 
 from models import ExecutorResult
-from llm_providers import gemini_provider
+from llm_providers import gemini_provider_vision as gemini_provider
 
 
 VISION_SYSTEM_PROMPT = """Bạn là VISION AGENT trong hệ thống phát hiện gian lận ngân hàng.

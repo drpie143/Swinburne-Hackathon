@@ -41,7 +41,7 @@ from models import (
     PlannerTask, ExecutorResult, TaskType
 )
 from config import settings
-from llm_providers import gemini_provider
+from llm_providers import gemini_provider_planner as gemini_provider
 
 
 # =====================================================================
