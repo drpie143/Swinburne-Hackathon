@@ -141,7 +141,7 @@ class ExecutorAgent:
     """
 
     def __init__(self):
-        self.max_retries: int = 1
+        self.max_retries: int = 2
         # Map tool name → safe execution function
         self._tools: dict[str, callable] = {
             "neo4j_cypher": self._tool_neo4j_cypher,
@@ -206,38 +206,47 @@ class ExecutorAgent:
 
             except Exception as e:
                 if attempt < self.max_retries:
-                    print(f"   ⚠️  Retry ({e})")
+                    import time
+                    delay = (attempt + 1) * 2
+                    print(f"   ⚠️  Retry in {delay}s ({e})")
+                    time.sleep(delay)
                     continue
                 return ExecutorResult(
                     task_id=task.task_id,
                     task_type=task.task_type,
                     success=False,
-                    error_message=f"Failed: {str(e)}",
+                    error_message=f"Failed after {self.max_retries + 1} attempts: {str(e)}",
                 )
 
     def execute_batch(self, tasks: list[PlannerTask]) -> list[ExecutorResult]:
-        """Thực thi batch tasks song song (parallel API calls)."""
+        """
+        Thực thi batch tasks TUẦN TỰ (sequential).
+        
+        Trước đây chạy parallel bằng ThreadPoolExecutor → 10 LLM calls
+        cùng lúc → hết quota liên tục (free tier: 15 req/min).
+        
+        Sequential giúp:
+        - Tránh burst API calls → ít bị 429
+        - Tổng thời gian thực tế NHANH hơn vì không phải retry
+        - Dễ debug hơn (thứ tự output rõ ràng)
+        """
         print(f"\n{'─'*50}")
-        print(f"⚡ EXECUTOR: Batch ({len(tasks)} tasks) — PARALLEL")
+        print(f"⚡ EXECUTOR: Batch ({len(tasks)} tasks) — SEQUENTIAL")
         print(f"{'─'*50}")
 
-        results: list[ExecutorResult] = [None] * len(tasks)
-        with ThreadPoolExecutor(max_workers=min(len(tasks), 5)) as pool:
-            future_to_idx = {
-                pool.submit(self.execute_task, task): idx
-                for idx, task in enumerate(tasks)
-            }
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                try:
-                    results[idx] = future.result()
-                except Exception as e:
-                    results[idx] = ExecutorResult(
-                        task_id=tasks[idx].task_id,
-                        task_type=tasks[idx].task_type,
-                        success=False,
-                        error_message=f"Parallel exec failed: {e}",
-                    )
+        results: list[ExecutorResult] = []
+        for i, task in enumerate(tasks):
+            print(f"\n   [{i+1}/{len(tasks)}]", end=" ")
+            try:
+                result = self.execute_task(task)
+                results.append(result)
+            except Exception as e:
+                results.append(ExecutorResult(
+                    task_id=task.task_id,
+                    task_type=task.task_type,
+                    success=False,
+                    error_message=f"Execution failed: {e}",
+                ))
 
         success_count = sum(1 for r in results if r.success)
         total_indicators = sum(len(r.risk_indicators) for r in results)

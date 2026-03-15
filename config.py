@@ -40,6 +40,7 @@ class Settings(BaseModel):
     gemini_model_id: str = "gemini-2.5-flash"
     gemini_api_key_planner: str = ""
     gemini_api_key_executor: str = ""
+    gemini_api_key_executor_pool: str = ""
     gemini_api_key_detective: str = ""
     gemini_api_key_vision: str = ""
     gemini_api_key_report: str = ""
@@ -100,6 +101,7 @@ def get_settings() -> Settings:
         gemini_model_id=os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash"),
         gemini_api_key_planner=os.getenv("GEMINI_API_KEY_PLANNER", ""),
         gemini_api_key_executor=os.getenv("GEMINI_API_KEY_EXECUTOR", ""),
+        gemini_api_key_executor_pool=os.getenv("GEMINI_API_KEY_EXECUTOR_POOL", ""),
         gemini_api_key_detective=os.getenv("GEMINI_API_KEY_DETECTIVE", ""),
         gemini_api_key_vision=os.getenv("GEMINI_API_KEY_VISION", ""),
         gemini_api_key_report=os.getenv("GEMINI_API_KEY_REPORT", ""),

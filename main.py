@@ -35,6 +35,7 @@ import sys
 import json
 import asyncio
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from models import Transaction
 from orchestrator import FraudDetectionOrchestrator
@@ -198,34 +199,34 @@ def create_fastapi_app():
     - GET  /scenarios   → List demo scenarios
     - POST /demo/{n}    → Run demo scenario N (1-3)
     """
-    from fastapi import FastAPI, BackgroundTasks, HTTPException
+    from fastapi import FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
+    
+    # Shared orchestrator
+    orchestrator = FraudDetectionOrchestrator()
+    
+    # FIX: Dùng lifespan thay vì deprecated on_event
+    @asynccontextmanager
+    async def lifespan(app):
+        orchestrator.initialize()
+        yield
+        orchestrator.shutdown()
     
     app = FastAPI(
         title="Fraud Detection System",
         description="Zero-Cost Agentic AI Fraud Detection Pipeline",
         version="2.0.0",
+        lifespan=lifespan,
     )
     
-    # CORS (cho frontend nếu có)
+    # FIX: CORS — chỉ cho phép localhost (thay vì wildcard *)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
-    # Shared orchestrator
-    orchestrator = FraudDetectionOrchestrator()
-    
-    @app.on_event("startup")
-    async def startup():
-        orchestrator.initialize()
-    
-    @app.on_event("shutdown")
-    async def shutdown():
-        orchestrator.shutdown()
     
     @app.get("/")
     async def root():
@@ -249,11 +250,13 @@ def create_fastapi_app():
     
     @app.get("/health")
     async def health():
+        from graph_db import neo4j_client
+        from config import settings as _settings
         return {
             "status": "healthy",
-            "neo4j": "connected" if __import__("graph_db").neo4j_client.is_connected else "simulator",
+            "neo4j": "connected" if neo4j_client.is_connected else "simulator",
             "chromadb": "active",
-            "gemini": "configured" if __import__("config").settings.gemini_api_key else "fallback",
+            "gemini": "configured" if _settings.gemini_api_key else "fallback",
         }
     
     @app.post("/transaction")
@@ -263,8 +266,13 @@ def create_fastapi_app():
         
         Body: Transaction object (JSON)
         Returns: Full pipeline result
+        
+        FIX: Dùng asyncio.to_thread để không block event loop
+        (pipeline có thể mất 30-60s cho LLM calls).
         """
-        result = orchestrator.process_transaction(transaction)
+        result = await asyncio.to_thread(
+            orchestrator.process_transaction, transaction
+        )
         
         return {
             "transaction_id": transaction.transaction_id,
@@ -297,6 +305,8 @@ def create_fastapi_app():
     async def run_demo_scenario(scenario_number: int):
         """
         Chạy 1 demo scenario (1-3).
+        
+        FIX: Dùng asyncio.to_thread để không block event loop.
         """
         if scenario_number < 1 or scenario_number > len(DEMO_SCENARIOS):
             raise HTTPException(
@@ -305,7 +315,9 @@ def create_fastapi_app():
             )
         
         scenario = DEMO_SCENARIOS[scenario_number - 1]
-        result = orchestrator.process_transaction(scenario["transaction"])
+        result = await asyncio.to_thread(
+            orchestrator.process_transaction, scenario["transaction"]
+        )
         
         return {
             "scenario": scenario["name"],

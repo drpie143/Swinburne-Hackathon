@@ -261,37 +261,7 @@ class DecisionResult(BaseModel):
     investigation_report: Optional[InvestigationReport] = Field(default=None)
 
 
-# =====================================================================
-# LANGGRAPH STATE - Trạng thái cho LangGraph orchestration
-# =====================================================================
 
-class PipelineState(BaseModel):
-    """
-    State object cho LangGraph pipeline.
-    
-    LangGraph quản lý flow qua state object:
-    Mỗi node (phase1, planner, executor, report, detective)
-    đọc và cập nhật state này.
-    """
-    # Input
-    transaction: Optional[Transaction] = None
-    
-    # Phase 1
-    phase1_result: Optional[Phase1Result] = None
-    
-    # Phase 2
-    investigation_request: Optional[InvestigationRequest] = None
-    current_tasks: list[PlannerTask] = Field(default_factory=list)
-    all_results: list[ExecutorResult] = Field(default_factory=list)
-    investigation_step: int = 0
-    investigation_done: bool = False
-    planner_confidence: float = 0.0
-    
-    # Phase 2 - Report
-    report: Optional[InvestigationReport] = None
-    
-    # Phase 3
-    decision: Optional[DecisionResult] = None
-    
-    # Meta
-    error: Optional[str] = None
+# NOTE: PipelineState đã bị xóa — hệ thống dùng GraphState (TypedDict)
+# trong orchestrator.py thay vì Pydantic model.
+

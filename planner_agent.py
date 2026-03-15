@@ -52,20 +52,28 @@ PLANNER_SYSTEM_PROMPT = """Bạn là PLANNER AGENT trong hệ thống phát hi�
 
 NHIỆM VỤ: Nhận thông tin giao dịch nghi ngờ + kết quả screening Phase 1 → tạo KẾ HOẠCH ĐIỀU TRA.
 
-CÁC LOẠI TASK CÓ THỂ TẠO:
-1. graph_query - Truy vấn Neo4j graph DB: tìm mối quan hệ, shared devices/IPs, mule networks, circular flows
-2. behavioral_analysis - Phân tích hành vi sender từ MongoDB Atlas: account age, transaction history, baseline
-3. knowledge_retrieval - Tìm fraud patterns trong ChromaDB (RAG): structuring, mule, ATO, APP fraud
-4. device_analysis - Phân tích device/IP/location từ Neo4j graph: VPN/Tor, device sharing, geo-anomaly
-5. amount_pattern - Phân tích mẫu số tiền từ MongoDB Atlas: structuring (<$1000/$10000), round amounts, outliers
+CÁC LOẠI TASK CÓ THỂ TẠO (TỔNG HỢP — mỗi task bao phủ NHIỀU khía cạnh):
+1. account_profiling - TỔNG HỢP: Phân tích hành vi + lịch sử + mẫu số tiền của sender VÀ receiver từ MongoDB Atlas
+   → Bao gồm: account age, KYC status, transaction history, baseline spending, structuring patterns (<$1000/$10000), round amounts, outliers, velocity
+   → Executor sẽ query TOÀN BỘ MongoDB data cần thiết trong 1 task
 
+2. network_analysis - TỔNG HỢP: Phân tích mạng lưới quan hệ + thiết bị/IP từ Neo4j graph DB
+   → Bao gồm: shared devices/IPs, mule networks, circular flows, device fingerprint, VPN/Tor detection, geo-anomaly, blacklisted entities
+   → Executor sẽ query TOÀN BỘ Neo4j data cần thiết trong 1 task
+
+3. knowledge_retrieval - Tìm fraud patterns tương tự trong ChromaDB (RAG): structuring, mule, ATO, APP fraud
+   → So sánh case hiện tại với các patterns đã biết
+
+QUAN TRỌNG — TỐI ƯU TỐC ĐỘ:
+- TẠO TỐI ĐA 3 TASKS (trừ trường hợp đặc biệt thì 4)
+- Mỗi task phải MÔ TẢ CHI TIẾT để Executor biết cần query những gì
+- KHÔNG tách nhỏ tasks khi có thể gộp (ví dụ: KHÔNG tạo riêng behavioral_analysis + amount_pattern, hãy gộp vào account_profiling)
+- Ưu tiên task nào cho NHIỀU thông tin nhất từ ÍT queries nhất
 
 QUY TẮC:
 - Phân tích KỸ context từ Phase 1 để hiểu TẠI SAO giao dịch bị flag
-- Tạo HYPOTHESIS (giả thuyết gian lận) cụ thể
-- Chỉ tạo tasks "CẦN THIẾT" cho hypothesis đó ("KHÔNG phải lúc nào cũng làm hết mọi thứ")
+- Tạo HYPOTHESIS (giả thuyết gian lận) cụ thể (chỉ tạo những task thực sự cần thiết, không phải lúc nào cũng làm tất cả, và tùy vào dữ liệu nhận được mà thứ tự hoặc mỗi task có thể không theo thứ tự hoặc không giống nhau, cần gì tạo nấy)
 - Gán priority: 10 (cao nhất) → 1 (thấp nhất)
-- Nếu tasks phụ thuộc nhau, chỉ định depends_on
 
 RESPONSE FORMAT (JSON):
 {
@@ -73,10 +81,9 @@ RESPONSE FORMAT (JSON):
     "reasoning": "Giải thích tại sao chọn các tasks này",
     "tasks": [
         {
-            "task_type": "graph_query|behavioral_analysis|knowledge_retrieval|device_analysis|amount_pattern",
-            "description": "Mô tả chi tiết task cần làm",
-            "priority": 1-10,
-            "depends_on": []
+            "task_type": "account_profiling|network_analysis|knowledge_retrieval",
+            "description": "Mô tả CHI TIẾT tất cả data cần query trong task này",
+            "priority": 1-10
         }
     ]
 }
@@ -335,7 +342,8 @@ class PlannerAgent:
     
     def evaluate_evidence(
         self,
-        new_results: list[ExecutorResult]
+        new_results: list[ExecutorResult],
+        vision_analysis: dict | None = None,
     ) -> tuple[bool, Optional[list[PlannerTask]]]:
         """
         ĐÁNH GIÁ bằng chứng bằng Gemini LLM.
@@ -344,6 +352,7 @@ class PlannerAgent:
         - Evidence mới từ Executor
         - Evidence tích lũy trước đó
         - Hypothesis ban đầu
+        - Vision Agent analysis (cross-reference, patterns)
         → Quyết định: đủ rồi hay cần thêm?
         """
         self.step_count += 1
@@ -362,10 +371,23 @@ class PlannerAgent:
         # ─── Tạo evidence summary cho LLM ───
         evidence_text = self._summarize_evidence()
         
+        # ─── Thêm Vision analysis nếu có ───
+        vision_text = ""
+        if vision_analysis:
+            vision_text = (
+                f"\n=== VISION AGENT ANALYSIS ===\n"
+                f"Summary: {vision_analysis.get('summary', 'N/A')}\n"
+                f"Risk Level: {vision_analysis.get('overall_risk_level', 'N/A')}\n"
+                f"Patterns: {vision_analysis.get('patterns_detected', [])}\n"
+                f"Cross-references: {vision_analysis.get('cross_references', [])}\n"
+                f"Recommendation: {vision_analysis.get('recommended_action', 'N/A')}\n"
+            )
+        
         user_message = (
             f"=== HYPOTHESIS ===\n{self.hypothesis}\n\n"
             f"=== EVIDENCE THU THẬP ({len(self.accumulated_evidence)} sources) ===\n"
-            f"{evidence_text}\n\n"
+            f"{evidence_text}\n"
+            f"{vision_text}\n"
             f"=== STEP ===\n"
             f"Step {self.step_count}/{self.max_steps}\n\n"
             f"Hãy đánh giá: đủ evidence chưa? Cần thêm gì?"

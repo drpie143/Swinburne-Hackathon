@@ -1,11 +1,12 @@
 # ====================================================================
 # LLM_PROVIDERS.PY - Kết nối LLM Cloud API (Gemini 2.5 Flash)
 # ====================================================================
-# Tất cả agents dùng Google Gemini 2.5 Flash (free tier):
-#   - Planner Agent: tạo kế hoạch điều tra
-#   - Vision Agent: phân tích kết quả executor
-#   - Report Agent: tạo báo cáo
-#   - Detective Agent: ra quyết định cuối
+# THAY ĐỔI QUAN TRỌNG:
+#   1. Thread-safe: Lock toàn cục cho genai.configure() → tránh
+#      race condition khi nhiều agents cùng gọi API với keys khác nhau
+#   2. Exponential backoff: retry tự động khi bị 429 (rate limit)
+#      → giải quyết lỗi quota liên tục khi Executor chạy parallel
+#   3. Giữ nguyên interface cũ → backward compatible
 #
 # Gemini free tier: 15 req/min, 1,500 req/day
 # Đăng ký: https://aistudio.google.com/apikey
@@ -13,6 +14,9 @@
 
 from __future__ import annotations
 import json
+import time
+import random
+import threading
 from typing import Optional
 
 import google.generativeai as genai
@@ -21,18 +25,23 @@ from config import settings
 
 
 # =====================================================================
-# GEMINI CLIENT - Cho TẤT CẢ agents
+# GEMINI CLIENT - Thread-Safe + Retry
 # =====================================================================
 
 class GeminiProvider:
     """
     Wrapper cho Google Gemini 2.5 Flash.
     
-    Mỗi agent có instance riêng với API key riêng để tránh hết quota.
-    Nếu api_key không truyền vào → fallback về gemini_api_key chung.
+    Thread-safe: dùng Lock toàn cục vì genai.configure() thay đổi
+    global state. Lock serialize tất cả API calls → cũng giúp giảm
+    rate limit errors (free tier: 15 req/min).
     
-    Free tier: 15 req/min, 1,500 req/day PER KEY
+    Retry: exponential backoff cho lỗi 429/503/quota.
     """
+    
+    # genai.configure() thay đổi global state → cần Lock
+    # Serialize cũng giúp tự nhiên rate-limit (tốt cho free tier)
+    _config_lock = threading.Lock()
     
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.gemini_api_key
@@ -40,13 +49,40 @@ class GeminiProvider:
             print("⚠️  GEMINI_API_KEY chưa được cấu hình! Agents sẽ dùng fallback.")
             self.model = None
         else:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(settings.gemini_model_id)
+            with GeminiProvider._config_lock:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel(settings.gemini_model_id)
     
-    def _ensure_configured(self):
-        """Đảm bảo global genai config đang dùng đúng API key của provider này."""
-        if self.api_key:
-            genai.configure(api_key=self.api_key)
+    def _safe_call(self, fn, fallback_value, max_retries: int = 3):
+        """
+        Thread-safe LLM call với:
+        1. Lock để tránh API key race condition giữa các agents
+        2. Exponential backoff retry cho rate limit (429) errors
+        3. Graceful fallback nếu tất cả retries fail
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                with GeminiProvider._config_lock:
+                    genai.configure(api_key=self.api_key)
+                    return fn()
+            except (json.JSONDecodeError, TypeError):
+                # Lỗi parse → không retry
+                return fallback_value
+            except Exception as e:
+                err = str(e).lower()
+                retryable = any(k in err for k in [
+                    "429", "quota", "rate", "resource_exhausted",
+                    "too many", "overloaded", "503", "unavailable",
+                ])
+                if retryable and attempt < max_retries:
+                    delay = (2 ** attempt) * 2 + random.uniform(0, 1)
+                    print(f"   ⏳ Rate limit, retry in {delay:.1f}s "
+                          f"(attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(delay)
+                    continue
+                print(f"   ⚠️  Gemini API error: {e}")
+                return fallback_value
+        return fallback_value
     
     def generate(
         self,
@@ -54,22 +90,11 @@ class GeminiProvider:
         temperature: float = 0.3,
         max_tokens: int = 8192,
     ) -> str:
-        """
-        Generate text từ Gemini.
-        
-        Args:
-            prompt: Full prompt (system + user combined)
-            temperature: Creativity level
-            max_tokens: Max output tokens
-            
-        Returns:
-            Generated text
-        """
+        """Generate text từ Gemini (thread-safe + retry)."""
         if not self.model:
             return self._fallback_response(prompt)
         
-        self._ensure_configured()
-        try:
+        def _call():
             response = self.model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
@@ -78,9 +103,8 @@ class GeminiProvider:
                 ),
             )
             return response.text or ""
-        except Exception as e:
-            print(f"⚠️  Gemini API error: {e}")
-            return self._fallback_response(prompt)
+        
+        return self._safe_call(_call, self._fallback_response(prompt))
     
     def chat(
         self,
@@ -89,20 +113,7 @@ class GeminiProvider:
         temperature: Optional[float] = None,
         max_tokens: int = 4096,
     ) -> str:
-        """
-        Chat-style generation: system prompt + user message.
-        
-        Dùng bởi Planner Agent, Detective Agent.
-        
-        Args:
-            system_prompt: Vai trò / instructions cho LLM
-            user_message: Message chính cần LLM xử lý
-            temperature: Override temperature
-            max_tokens: Giới hạn tokens output
-            
-        Returns:
-            Text response
-        """
+        """Chat-style generation: system prompt + user message."""
         prompt = f"{system_prompt}\n\n{user_message}"
         return self.generate(
             prompt,
@@ -117,12 +128,14 @@ class GeminiProvider:
         temperature: Optional[float] = None,
     ) -> dict:
         """
-        Chat + parse response thành JSON dict.
+        Chat + parse response thành JSON dict (thread-safe + retry).
         
-        Dùng cho Planner (tạo task list JSON) và Detective (decision JSON).
-        
-        Returns:
-            Parsed JSON dict, hoặc {} nếu parse fail
+        Strategies:
+        1. JSON mode (response_mime_type="application/json")
+        2. Plain text + json.loads()
+        3. Extract JSON from markdown code block
+        4. Extract JSON object from free text
+        5. Fallback dict
         """
         if not self.model:
             raw = self._fallback_response(f"{system_prompt}\n\n{user_message}")
@@ -132,65 +145,69 @@ class GeminiProvider:
                 return self._fallback_json(system_prompt)
         
         prompt = f"{system_prompt}\n\n{user_message}"
+        temp = temperature if temperature is not None else 0.1
         
-        # Dùng response_mime_type để buộc Gemini trả JSON thuần
-        self._ensure_configured()
-        try:
+        # Strategy 1: JSON mode
+        def _json_mode():
             response = self.model.generate_content(
                 prompt,
                 generation_config=genai.types.GenerationConfig(
-                    temperature=temperature if temperature is not None else 0.1,
+                    temperature=temp,
                     max_output_tokens=4096,
                     response_mime_type="application/json",
                 ),
             )
             raw = response.text or ""
             return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        except Exception as e:
-            print(f"⚠️  Gemini JSON mode error: {e}")
         
-        # Fallback: gọi bình thường rồi parse
-        raw = self.chat(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            temperature=temperature,
-        )
+        result = self._safe_call(_json_mode, None)
+        if result is not None:
+            return result
         
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # Strategy 2: Plain text → parse
+        def _text_mode():
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temp,
+                    max_output_tokens=4096,
+                ),
+            )
+            return response.text or ""
         
-        # Thử extract JSON từ markdown code block
-        for delimiter in ["```json", "```"]:
-            if delimiter in raw:
-                try:
-                    json_str = raw.split(delimiter)[1].split("```")[0].strip()
-                    return json.loads(json_str)
-                except (json.JSONDecodeError, IndexError):
-                    pass
-
-        # Thử extract JSON object từ chuỗi tự do (thinking/markdown)
-        extracted = self._extract_json_object(raw)
-        if extracted is not None:
-            return extracted
+        raw = self._safe_call(_text_mode, "")
         
-        print(f"⚠️  Không parse được JSON từ Gemini response")
+        if raw:
+            # 2a: Direct parse
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            
+            # 2b: Extract from markdown code block
+            for delimiter in ["```json", "```"]:
+                if delimiter in raw:
+                    try:
+                        json_str = raw.split(delimiter)[1].split("```")[0].strip()
+                        return json.loads(json_str)
+                    except (json.JSONDecodeError, IndexError):
+                        pass
+            
+            # 2c: Extract JSON object from free text
+            extracted = self._extract_json_object(raw)
+            if extracted is not None:
+                return extracted
         
-        # Fallback cho các agent cụ thể
+        print("   ⚠️  Không parse được JSON từ Gemini response")
         return self._fallback_json(system_prompt)
-
+    
     def _extract_json_object(self, text: str) -> Optional[dict]:
         """Thử lấy JSON object hợp lệ từ chuỗi có thể lẫn text."""
         if not text:
             return None
-
         start = text.find("{")
         if start == -1:
             return None
-
         depth = 0
         end = -1
         for i in range(start, len(text)):
@@ -202,10 +219,8 @@ class GeminiProvider:
                 if depth == 0:
                     end = i
                     break
-
         if end == -1:
             return None
-
         candidate = text[start:end + 1]
         try:
             return json.loads(candidate)
@@ -218,23 +233,20 @@ class GeminiProvider:
         prompt: str,
         mime_type: str = "image/png",
     ) -> str:
-        """
-        Phân tích hình ảnh bằng Gemini Vision.
-        """
+        """Phân tích hình ảnh bằng Gemini Vision (thread-safe)."""
         if not self.model:
             return "Vision analysis không khả dụng (thiếu Gemini API key)"
         
-        self._ensure_configured()
-        try:
-            image_part = {
-                "mime_type": mime_type,
-                "data": image_bytes,
-            }
+        def _call():
+            image_part = {"mime_type": mime_type, "data": image_bytes}
             response = self.model.generate_content([prompt, image_part])
             return response.text or ""
-        except Exception as e:
-            print(f"⚠️  Gemini Vision error: {e}")
-            return f"Vision analysis failed: {str(e)}"
+        
+        return self._safe_call(_call, "Vision analysis failed: Gemini API unavailable")
+    
+    # =================================================================
+    # FALLBACK RESPONSES
+    # =================================================================
     
     def _fallback_response(self, prompt: str) -> str:
         """Fallback khi không có Gemini API key."""
@@ -289,15 +301,52 @@ class GeminiProvider:
         return {}
 
 
+class GeminiProviderPool:
+    """Round-robin pool cho nhiều GeminiProvider (dùng nhiều API keys)."""
+
+    def __init__(self, providers: list[GeminiProvider]):
+        self.providers = providers
+        self._idx = 0
+        self._lock = threading.Lock()
+
+    def _next(self) -> GeminiProvider:
+        with self._lock:
+            provider = self.providers[self._idx]
+            self._idx = (self._idx + 1) % len(self.providers)
+            return provider
+
+    def generate(self, *args, **kwargs):
+        return self._next().generate(*args, **kwargs)
+
+    def chat(self, *args, **kwargs):
+        return self._next().chat(*args, **kwargs)
+
+    def chat_json(self, *args, **kwargs):
+        return self._next().chat_json(*args, **kwargs)
+
+    def analyze_image(self, *args, **kwargs):
+        return self._next().analyze_image(*args, **kwargs)
+
+
 # =====================================================================
 # PER-AGENT PROVIDER INSTANCES
 # =====================================================================
 # Mỗi agent dùng API key riêng → tránh hết quota khi demo
-# Nếu key riêng trống → fallback về GEMINI_API_KEY chung
+# Thread-safe: GeminiProvider._config_lock serialize API calls
 # =====================================================================
 
 gemini_provider_planner = GeminiProvider(api_key=settings.gemini_api_key_planner or None)
-gemini_provider_executor = GeminiProvider(api_key=settings.gemini_api_key_executor or None)
+
+_executor_pool_keys = [
+    key.strip() for key in settings.gemini_api_key_executor_pool.split(",")
+    if key.strip()
+]
+if _executor_pool_keys:
+    _executor_providers = [GeminiProvider(api_key=k) for k in _executor_pool_keys]
+    gemini_provider_executor = GeminiProviderPool(_executor_providers)
+else:
+    gemini_provider_executor = GeminiProvider(api_key=settings.gemini_api_key_executor or None)
+
 gemini_provider_detective = GeminiProvider(api_key=settings.gemini_api_key_detective or None)
 gemini_provider_vision = GeminiProvider(api_key=settings.gemini_api_key_vision or None)
 gemini_provider_report = GeminiProvider(api_key=settings.gemini_api_key_report or None)

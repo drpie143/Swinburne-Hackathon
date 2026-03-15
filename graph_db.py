@@ -28,6 +28,7 @@
 # ====================================================================
 
 from __future__ import annotations
+import re
 from typing import Optional
 from config import settings
 
@@ -235,13 +236,16 @@ class Neo4jClient:
             return neptune_sim.get_neighbors(node_id, depth)
         
         with self.driver.session() as session:
-            result = session.run("""
-                MATCH path = (start {id: $id})-[*1..""" + str(depth) + """]-(connected)
+            # FIX: depth dùng parameter an toàn thay vì string concat
+            # Neo4j không hỗ trợ parameter cho variable-length path,
+            # nhưng ta validate depth là int trong range an toàn
+            safe_depth = max(1, min(int(depth), 4))
+            query = f"""MATCH path = (start {{id: $id}})-[*1..{safe_depth}]-(connected)
                 WITH nodes(path) AS ns, relationships(path) AS rs
                 UNWIND ns AS n
                 WITH COLLECT(DISTINCT n) AS nodes, rs
                 UNWIND nodes AS node
-                WITH COLLECT(DISTINCT {
+                WITH COLLECT(DISTINCT {{
                     id: node.id,
                     type: CASE 
                         WHEN 'Account' IN labels(node) THEN 'account'
@@ -252,10 +256,10 @@ class Neo4jClient:
                     END,
                     label: COALESCE(node.name, node.label, node.id),
                     risk: node.risk
-                }) AS node_list, rs
+                }}) AS node_list, rs
                 UNWIND rs AS r
                 RETURN node_list,
-                       COLLECT(DISTINCT {
+                       COLLECT(DISTINCT {{
                            source: startNode(r).id,
                            target: endNode(r).id,
                            relationship: type(r),
@@ -263,8 +267,9 @@ class Neo4jClient:
                            count: r.count,
                            since: r.since,
                            frequency: r.frequency
-                       }) AS edge_list
-            """, id=node_id)
+                       }}) AS edge_list
+            """
+            result = session.run(query, id=node_id)
             
             record = result.single()
             if not record:
@@ -413,11 +418,11 @@ class Neo4jClient:
         """
         Chạy Cypher query tùy ý (cho Executor Agent flexibility).
         
-        Executor Agent có thể tạo dynamic Cypher queries
-        dựa trên instruction từ Planner.
+        FIX: Validate query trước khi chạy — chặn destructive operations
+        để tránh LLM-injected harmful queries.
         
         Args:
-            query: Cypher query string
+            query: Cypher query string (chỉ READ-ONLY)
             params: Query parameters (tránh injection)
             
         Returns:
@@ -426,6 +431,17 @@ class Neo4jClient:
         if self._use_simulator:
             print("⚠️  run_cypher không khả dụng với simulator")
             return []
+        
+        # FIX: Chặn destructive operations
+        _BLOCKED_KEYWORDS = [
+            "DELETE", "DETACH", "CREATE", "SET ", "REMOVE",
+            "DROP", "MERGE", "LOAD CSV", "CALL ", "FOREACH",
+        ]
+        query_upper = query.upper().strip()
+        for keyword in _BLOCKED_KEYWORDS:
+            if keyword in query_upper:
+                print(f"🚫 Blocked destructive Cypher query: contains '{keyword.strip()}'")
+                return []
         
         with self.driver.session() as session:
             result = session.run(query, **(params or {}))

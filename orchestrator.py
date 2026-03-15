@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import uuid
+import threading
 from datetime import datetime
 from typing import TypedDict, Optional, Annotated
 
@@ -399,10 +400,12 @@ def end_block(state: GraphState) -> GraphState:
 # =====================================================================
 
 # Shared agent instances (reset per investigation)
+# Protected by _processing_lock to prevent race conditions
 _planner = PlannerAgent()
 _executor = ExecutorAgent()
 _report_agent = ReportAgent()
 _detective = DetectiveAgent()
+_processing_lock = threading.Lock()
 
 
 def planner_node(state: GraphState) -> GraphState:
@@ -474,10 +477,9 @@ def vision_node(state: GraphState) -> GraphState:
     # Lấy context cho Vision
     txn = state.get("transaction", {})
     phase1 = state.get("phase1_result", {})
-    hypothesis = ""
-    inv_req = state.get("investigation_request", {})
-    if inv_req:
-        hypothesis = inv_req.get("priority", "")
+    
+    # FIX: Lấy hypothesis từ Planner (trước đây lấy nhầm "priority")
+    hypothesis = _planner.hypothesis if _planner.hypothesis else ""
     
     investigation_context = {
         "transaction_id": txn.get("transaction_id", ""),
@@ -490,7 +492,7 @@ def vision_node(state: GraphState) -> GraphState:
     # Gọi Vision Agent (Gemini 2.5 Flash)
     analysis = vision_agent.analyze_results(
         evidence=evidence,
-        hypothesis=str(hypothesis),
+        hypothesis=hypothesis,
         investigation_context=investigation_context,
     )
     
@@ -511,8 +513,10 @@ def planner_evaluate_node(state: GraphState) -> GraphState:
     evidence = [ExecutorResult(**r) for r in result_dicts]
     vision_analysis = state.get("vision_analysis", {})
     
-    # Planner evaluate với context từ Vision Agent
-    is_done, follow_up_tasks = _planner.evaluate_evidence(evidence)
+    # FIX: Planner evaluate VỚI vision_analysis (trước đây bị bỏ qua)
+    is_done, follow_up_tasks = _planner.evaluate_evidence(
+        evidence, vision_analysis=vision_analysis
+    )
     
     # Xem xét Vision recommendation
     vision_action = vision_analysis.get("recommended_action", "investigate_more")
@@ -779,7 +783,7 @@ class FraudDetectionOrchestrator:
         print(f" {transaction.sender_id} → {transaction.receiver_id}: ${transaction.amount:,.2f}")
         print(f"{'*'*70}")
         
-        # ─── Run LangGraph pipeline ───
+        # ─── Run LangGraph pipeline (thread-safe) ───
         initial_state: GraphState = {
             "transaction": transaction.model_dump(),
             "phase1_result": None,
@@ -798,18 +802,21 @@ class FraudDetectionOrchestrator:
             "error": None,
         }
         
-        try:
-            final_state = self.app.invoke(initial_state)
-        except Exception as e:
-            print(f"\n❌ Pipeline error: {e}")
-            import traceback
-            traceback.print_exc()
-            final_state = {
-                **initial_state,
-                "final_decision": "escalate",
-                "final_message": f"Pipeline error: {str(e)}. Escalating to human review.",
-                "error": str(e),
-            }
+        # FIX: Lock prevents concurrent access to shared agent instances
+        with _processing_lock:
+            _planner.reset()
+            try:
+                final_state = self.app.invoke(initial_state)
+            except Exception as e:
+                print(f"\n❌ Pipeline error: {e}")
+                import traceback
+                traceback.print_exc()
+                final_state = {
+                    **initial_state,
+                    "final_decision": "escalate",
+                    "final_message": f"Pipeline error: {str(e)}. Escalating to human review.",
+                    "error": str(e),
+                }
         
         # ─── Summary ───
         decision = final_state.get("final_decision", "escalate")
@@ -848,6 +855,7 @@ class FraudDetectionOrchestrator:
         return final_state
     
     def shutdown(self):
-        """Cleanup khi tắt app."""
+        """Cleanup khi tắt app — đóng tất cả DB connections."""
         neo4j_client.close()
+        mongodb_client.close()
         print("🔌 System shutdown complete.")
