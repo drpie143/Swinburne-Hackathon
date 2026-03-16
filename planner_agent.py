@@ -64,11 +64,14 @@ CÁC LOẠI TASK CÓ THỂ TẠO (TỔNG HỢP — mỗi task bao phủ NHIỀU 
 3. knowledge_retrieval - Tìm fraud patterns tương tự trong ChromaDB (RAG): structuring, mule, ATO, APP fraud
    → So sánh case hiện tại với các patterns đã biết
 
-QUAN TRỌNG — TỐI ƯU TỐC ĐỘ:
-- TẠO TỐI ĐA 3 TASKS (trừ trường hợp đặc biệt thì 4)
+QUAN TRỌNG — LẬP KẾ HOẠCH THÔNG MINH:
+- PHÂN TÍCH dữ liệu Phase 1 → quyết định CẦN TASK NÀO, KHÔNG cần task nào
+- Số lượng tasks KHÔNG CỐ ĐỊNH — có thể 2, 3, hoặc 4,... tùy context:
+  • Giao dịch đơn giản (amount thấp, sender whitelisted) → 2 tasks có thể đủ
+  • Giao dịch phức tạp (multiple red flags, mule network) → 3-4 tasks
+- KHÔNG máy móc tạo cùng 1 kế hoạch cho mọi giao dịch — mỗi case là khác nhau
 - Mỗi task phải MÔ TẢ CHI TIẾT để Executor biết cần query những gì
-- KHÔNG tách nhỏ tasks khi có thể gộp (ví dụ: KHÔNG tạo riêng behavioral_analysis + amount_pattern, hãy gộp vào account_profiling)
-- Ưu tiên task nào cho NHIỀU thông tin nhất từ ÍT queries nhất
+- KHÔNG tách nhỏ thêm (ví dụ: KHÔNG tạo riêng behavioral + amount_pattern, gộp vào account_profiling)
 
 QUY TẮC:
 - Phân tích KỸ context từ Phase 1 để hiểu TẠI SAO giao dịch bị flag
@@ -185,9 +188,11 @@ class PlannerAgent:
         self.hypothesis = llm_response.get("hypothesis", "Không xác định")
         
         print(f"   🧠 Hypothesis: {self.hypothesis}")
+        print(f"   💡 Reasoning: {llm_response.get('reasoning', 'N/A')[:150]}")
         print(f"   📋 Tasks: {len(tasks)}")
         for i, task in enumerate(tasks, 1):
-            print(f"      {i}. [{task.task_type.value}] {task.description[:70]}...")
+            print(f"      {i}. [{task.task_type.value}] (priority={task.priority})")
+            print(f"         {task.description[:120]}")
         print(f"{'='*60}\n")
         
         return tasks
@@ -273,8 +278,12 @@ class PlannerAgent:
         """
         tasks = []
         
-        # Map string → TaskType enum
+        # Map string → TaskType enum (consolidated + legacy)
         type_map = {
+            # Consolidated types (mới)
+            "account_profiling": TaskType.ACCOUNT_PROFILING,
+            "network_analysis": TaskType.NETWORK_ANALYSIS,
+            # Legacy types (backward compat)
             "graph_query": TaskType.GRAPH_QUERY,
             "behavioral_analysis": TaskType.BEHAVIORAL_ANALYSIS,
             "knowledge_retrieval": TaskType.KNOWLEDGE_RETRIEVAL,
@@ -293,6 +302,7 @@ class PlannerAgent:
             task_type = type_map.get(task_type_str)
             
             if not task_type:
+                print(f"   ⚠️  Unknown task_type '{task_type_str}' — skipped")
                 continue
             
             task_id = f"task_{uuid.uuid4().hex[:8]}"
@@ -322,14 +332,14 @@ class PlannerAgent:
         return [
             PlannerTask(
                 task_id=f"task_{uuid.uuid4().hex[:8]}",
-                task_type=TaskType.BEHAVIORAL_ANALYSIS,
-                description=f"Phân tích behavioral profile của sender {ctx.get('sender_id', '')}",
+                task_type=TaskType.ACCOUNT_PROFILING,
+                description=f"Phân tích hành vi + lịch sử giao dịch + mẫu số tiền của sender {ctx.get('sender_id', '')} và receiver {ctx.get('receiver_id', '')}",
                 priority=10,
             ),
             PlannerTask(
                 task_id=f"task_{uuid.uuid4().hex[:8]}",
-                task_type=TaskType.GRAPH_QUERY,
-                description=f"Truy vấn graph cho sender {ctx.get('sender_id', '')} và receiver {ctx.get('receiver_id', '')}",
+                task_type=TaskType.NETWORK_ANALYSIS,
+                description=f"Truy vấn graph cho sender {ctx.get('sender_id', '')} và receiver {ctx.get('receiver_id', '')}: mạng lưới quan hệ, thiết bị, IP, circular flows",
                 priority=9,
             ),
             PlannerTask(

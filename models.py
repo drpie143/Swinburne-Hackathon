@@ -46,16 +46,21 @@ class TaskType(str, Enum):
     """
     Các loại subtask mà Planner Agent tạo ra cho Executor.
     
-    Mỗi loại tương ứng với 1 nguồn dữ liệu hoặc phân tích cụ thể:
-    - GRAPH_QUERY: Truy vấn Neo4j (Cypher) - tìm mối quan hệ
-    - BEHAVIORAL_ANALYSIS: Phân tích hành vi từ lịch sử MongoDB Atlas
+    Consolidated types (mới — ưu tiên):
+    - ACCOUNT_PROFILING: Tổng hợp behavioral + amount pattern từ MongoDB
+    - NETWORK_ANALYSIS: Tổng hợp graph + device analysis từ Neo4j
     - KNOWLEDGE_RETRIEVAL: Tìm fraud patterns từ ChromaDB (RAG)
-    - DEVICE_ANALYSIS: Phân tích thiết bị, IP, geolocation
-    - AMOUNT_PATTERN: Phân tích mẫu số tiền (structuring, layering)
+    
+    Legacy types (vẫn hỗ trợ):
+    - GRAPH_QUERY, BEHAVIORAL_ANALYSIS, DEVICE_ANALYSIS, AMOUNT_PATTERN
     """
+    # Consolidated types
+    ACCOUNT_PROFILING = "account_profiling"
+    NETWORK_ANALYSIS = "network_analysis"
+    KNOWLEDGE_RETRIEVAL = "knowledge_retrieval"
+    # Legacy types (backward compat)
     GRAPH_QUERY = "graph_query"
     BEHAVIORAL_ANALYSIS = "behavioral_analysis"
-    KNOWLEDGE_RETRIEVAL = "knowledge_retrieval"
     DEVICE_ANALYSIS = "device_analysis"
     AMOUNT_PATTERN = "amount_pattern"
 
