@@ -29,8 +29,6 @@
 #     → Expected: Investigation → BLOCK (money laundering)
 # ====================================================================
 
-from __future__ import annotations
-
 import sys
 import json
 import asyncio
@@ -190,43 +188,51 @@ def run_cli_demo():
 def create_fastapi_app():
     """
     Tạo FastAPI application.
-    
+
     Endpoints:
     - GET  /        → API info
     - GET  /health  → Health check
     - POST /transaction → Process a transaction
     - GET  /scenarios   → List demo scenarios
     - POST /demo/{n}    → Run demo scenario N (1-3)
+    - WS   /ws/pipeline → WebSocket real-time pipeline events
+    - WS   /ws/pipeline/{txn_id} → WebSocket cho specific transaction
     """
-    from fastapi import FastAPI, BackgroundTasks, HTTPException
+    from fastapi import FastAPI, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    
+    from concurrent.futures import ThreadPoolExecutor
+    from event_emitter import event_emitter
+
     app = FastAPI(
         title="Fraud Detection System",
         description="Zero-Cost Agentic AI Fraud Detection Pipeline",
         version="2.0.0",
     )
-    
+
     # CORS (cho frontend nếu có)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Shared orchestrator
     orchestrator = FraudDetectionOrchestrator()
-    
+
+    # Thread pool for running sync orchestrator in async context
+    executor = ThreadPoolExecutor(max_workers=4)
+
     @app.on_event("startup")
     async def startup():
         orchestrator.initialize()
-    
+
     @app.on_event("shutdown")
     async def shutdown():
         orchestrator.shutdown()
-    
+        executor.shutdown(wait=False)
+
     @app.get("/")
     async def root():
         return {
@@ -242,11 +248,13 @@ def create_fastapi_app():
             "endpoints": {
                 "health": "GET /health",
                 "process": "POST /transaction",
+                "process_realtime": "POST /transaction/stream",
                 "scenarios": "GET /scenarios",
                 "demo": "POST /demo/{scenario_number}",
+                "websocket": "WS /ws/pipeline",
             },
         }
-    
+
     @app.get("/health")
     async def health():
         return {
@@ -255,17 +263,23 @@ def create_fastapi_app():
             "chromadb": "active",
             "gemini": "configured" if __import__("config").settings.gemini_api_key else "fallback",
         }
-    
+
     @app.post("/transaction")
     async def process_transaction(transaction: Transaction):
         """
         Xử lý 1 giao dịch qua pipeline.
-        
+
         Body: Transaction object (JSON)
         Returns: Full pipeline result
         """
-        result = orchestrator.process_transaction(transaction)
-        
+        # Run in thread pool to not block event loop
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            orchestrator.process_transaction,
+            transaction
+        )
+
         return {
             "transaction_id": transaction.transaction_id,
             "decision": result.get("final_decision", "escalate"),
@@ -279,7 +293,54 @@ def create_fastapi_app():
             "report": result.get("report"),
             "detail": result.get("decision"),
         }
-    
+
+    @app.websocket("/ws/pipeline")
+    async def websocket_pipeline(websocket: WebSocket):
+        """
+        WebSocket endpoint cho real-time pipeline events.
+
+        Client connect → nhận tất cả events từ mọi transactions.
+        """
+        await websocket.accept()
+        print(f"🔌 WebSocket client connected")
+
+        queue = event_emitter.subscribe()
+
+        try:
+            while True:
+                # Wait for events from orchestrator
+                event = await queue.get()
+                await websocket.send_text(event.to_json())
+        except WebSocketDisconnect:
+            print(f"🔌 WebSocket client disconnected")
+        except Exception as e:
+            print(f"❌ WebSocket error: {e}")
+        finally:
+            event_emitter.unsubscribe(queue)
+
+    @app.websocket("/ws/pipeline/{transaction_id}")
+    async def websocket_pipeline_txn(websocket: WebSocket, transaction_id: str):
+        """
+        WebSocket endpoint cho specific transaction.
+
+        Client gửi transaction_id khi connect → chỉ nhận events của transaction đó.
+        """
+        await websocket.accept()
+        print(f"🔌 WebSocket client connected for transaction: {transaction_id}")
+
+        queue = event_emitter.subscribe(transaction_id)
+
+        try:
+            while True:
+                event = await queue.get()
+                await websocket.send_text(event.to_json())
+        except WebSocketDisconnect:
+            print(f"🔌 WebSocket client disconnected: {transaction_id}")
+        except Exception as e:
+            print(f"❌ WebSocket error: {e}")
+        finally:
+            event_emitter.unsubscribe(queue, transaction_id)
+
     @app.get("/scenarios")
     async def list_scenarios():
         """Liệt kê các demo scenarios."""
@@ -292,7 +353,7 @@ def create_fastapi_app():
             }
             for i, s in enumerate(DEMO_SCENARIOS)
         ]
-    
+
     @app.post("/demo/{scenario_number}")
     async def run_demo_scenario(scenario_number: int):
         """
@@ -303,10 +364,17 @@ def create_fastapi_app():
                 status_code=400,
                 detail=f"Scenario number must be 1-{len(DEMO_SCENARIOS)}",
             )
-        
+
         scenario = DEMO_SCENARIOS[scenario_number - 1]
-        result = orchestrator.process_transaction(scenario["transaction"])
-        
+
+        # Run in thread pool
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            executor,
+            orchestrator.process_transaction,
+            scenario["transaction"]
+        )
+
         return {
             "scenario": scenario["name"],
             "description": scenario["description"],
@@ -317,7 +385,7 @@ def create_fastapi_app():
             "report": result.get("report"),
             "detail": result.get("decision"),
         }
-    
+
     return app
 
 

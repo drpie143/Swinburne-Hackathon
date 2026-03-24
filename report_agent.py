@@ -18,36 +18,27 @@ from models import (
 from llm_providers import gemini_provider_report as gemini_provider
 
 
-REPORT_PROMPT_TEMPLATE = """Bạn là REPORT GENERATING AGENT trong hệ thống phát hiện gian lận ngân hàng.
+REPORT_PROMPT_TEMPLATE = """Bạn là REPORT AGENT trong hệ thống phát hiện gian lận ngân hàng.
 
-NHIỆM VỤ: Tạo báo cáo điều tra chi tiết, audit-ready.
+NHIỆM VỤ: Tạo báo cáo điều tra NGẮN GỌN, súc tích.
 
-THÔNG TIN VỤ VIỆC:
-- Transaction ID: {transaction_id}
-- Request ID: {request_id}
-- Số bước điều tra: {total_steps}
-- Confidence score: {confidence:.2f}
+VỤ VIỆC: {transaction_id} | {request_id} | {total_steps} bước | confidence {confidence:.2f}
 
-HYPOTHESIS CỦA PLANNER:
-{hypothesis}
+HYPOTHESIS: {hypothesis}
 
-EVIDENCE THU THẬP ({evidence_count} sources):
+EVIDENCE ({evidence_count} sources):
 {evidence_text}
 
-RISK FACTORS ({risk_count}):
-{risk_factors_text}
+RISK ({risk_count}): {risk_factors_text}
+MITIGATING ({mitigating_count}): {mitigating_factors_text}
 
-MITIGATING FACTORS ({mitigating_count}):
-{mitigating_factors_text}
+YÊU CẦU — VIẾT NGẮN, KHÔNG DÀI DÒNG:
+1. Summary: 1-2 câu tóm tắt vụ việc
+2. Evidence: bullet-point ngắn, chỉ nêu phát hiện quan trọng
+3. Risk vs Mitigating: đánh giá 1-2 câu
+4. Đề xuất: ALLOW / BLOCK / ESCALATE + lý do 1 câu
 
-YÊU CẦU:
-1. Viết summary ngắn gọn (2-3 câu)
-2. Phân tích chi tiết từng evidence
-3. Đánh giá risk factors vs mitigating factors
-4. Đề xuất quyết định: ALLOW / BLOCK / ESCALATE
-5. Giải thích lý do đề xuất
-
-Viết bằng tiếng Việt, format rõ ràng, có thể dùng cho audit/compliance."""
+Tổng báo cáo KHÔNG quá 15 dòng. Viết tiếng Việt."""
 
 
 class ReportAgent:

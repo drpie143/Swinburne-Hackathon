@@ -39,7 +39,7 @@ class Settings(BaseModel):
     gemini_api_key: str = ""
     gemini_model_id: str = "gemini-2.5-flash"
     gemini_api_key_planner: str = ""
-    gemini_api_key_executor: str = ""
+    gemini_api_key_executor_list: list = []  # Pool of up to 5 executor keys
     gemini_api_key_detective: str = ""
     gemini_api_key_vision: str = ""
     gemini_api_key_report: str = ""
@@ -85,7 +85,7 @@ class Settings(BaseModel):
     api_port: int = 8000
     
     # --- Agent Configuration ---
-    max_investigation_steps: int = 10
+    max_investigation_steps: int = 3
     investigation_timeout: int = 30
     confidence_threshold: float = 0.85
 
@@ -99,7 +99,15 @@ def get_settings() -> Settings:
         gemini_api_key=os.getenv("GEMINI_API_KEY", ""),
         gemini_model_id=os.getenv("GEMINI_MODEL_ID", "gemini-2.5-flash"),
         gemini_api_key_planner=os.getenv("GEMINI_API_KEY_PLANNER", ""),
-        gemini_api_key_executor=os.getenv("GEMINI_API_KEY_EXECUTOR", ""),
+        gemini_api_key_executor_list=[
+            k for k in [
+                os.getenv("GEMINI_API_KEY_EXECUTOR_1", ""),
+                os.getenv("GEMINI_API_KEY_EXECUTOR_2", ""),
+                os.getenv("GEMINI_API_KEY_EXECUTOR_3", ""),
+                os.getenv("GEMINI_API_KEY_EXECUTOR_4", ""),
+                os.getenv("GEMINI_API_KEY_EXECUTOR_5", ""),
+            ] if k
+        ],
         gemini_api_key_detective=os.getenv("GEMINI_API_KEY_DETECTIVE", ""),
         gemini_api_key_vision=os.getenv("GEMINI_API_KEY_VISION", ""),
         gemini_api_key_report=os.getenv("GEMINI_API_KEY_REPORT", ""),
@@ -122,7 +130,7 @@ def get_settings() -> Settings:
         dynamodb_table_profiles=os.getenv("DYNAMODB_TABLE_PROFILES", "customer_profiles"),
         api_host=os.getenv("API_HOST", "0.0.0.0"),
         api_port=int(os.getenv("API_PORT", "8000")),
-        max_investigation_steps=int(os.getenv("MAX_INVESTIGATION_STEPS", "10")),
+        max_investigation_steps=int(os.getenv("MAX_INVESTIGATION_STEPS", "3")),
         investigation_timeout=int(os.getenv("INVESTIGATION_TIMEOUT", "30")),
         confidence_threshold=float(os.getenv("CONFIDENCE_THRESHOLD", "0.85")),
     )

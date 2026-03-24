@@ -297,10 +297,26 @@ class GeminiProvider:
 # =====================================================================
 
 gemini_provider_planner = GeminiProvider(api_key=settings.gemini_api_key_planner or None)
-gemini_provider_executor = GeminiProvider(api_key=settings.gemini_api_key_executor or None)
 gemini_provider_detective = GeminiProvider(api_key=settings.gemini_api_key_detective or None)
 gemini_provider_vision = GeminiProvider(api_key=settings.gemini_api_key_vision or None)
 gemini_provider_report = GeminiProvider(api_key=settings.gemini_api_key_report or None)
 
+# Executor pool: tối đa 5 providers, mỗi provider giữ 1 API key riêng
+# Cho phép chạy song song tối đa 5 tasks đồng thời
+_executor_keys = settings.gemini_api_key_executor_list
+if not _executor_keys:
+    # Fallback: dùng API key chung
+    _executor_keys = [settings.gemini_api_key] if settings.gemini_api_key else []
+
+gemini_provider_executor_pool: list[GeminiProvider] = [
+    GeminiProvider(api_key=key) for key in _executor_keys
+]
+
+print(f"   🔑 Executor pool: {len(gemini_provider_executor_pool)} API keys loaded")
+
+# Backward-compatible: giữ lại 1 instance cho import cũ
+gemini_provider_executor = gemini_provider_executor_pool[0] if gemini_provider_executor_pool else GeminiProvider()
+
 # Backward-compatible default
 gemini_provider = gemini_provider_planner
+

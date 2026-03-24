@@ -38,6 +38,8 @@ import uuid
 from datetime import datetime
 from typing import TypedDict, Optional, Annotated
 
+from event_emitter import event_emitter
+
 from langgraph.graph import StateGraph, END
 
 from models import (
@@ -51,7 +53,7 @@ from mongo_db import mongodb_client
 from graph_db import neo4j_client
 from vector_store import vector_store
 from planner_agent import PlannerAgent
-from executor_agent import ExecutorAgent
+from executor_agent import ExecutorPool
 from report_agent import ReportAgent
 from detective_agent import DetectiveAgent
 from vision_agent import vision_agent
@@ -400,7 +402,7 @@ def end_block(state: GraphState) -> GraphState:
 
 # Shared agent instances (reset per investigation)
 _planner = PlannerAgent()
-_executor = ExecutorAgent()
+_executor = ExecutorPool()
 _report_agent = ReportAgent()
 _detective = DetectiveAgent()
 
@@ -766,19 +768,25 @@ class FraudDetectionOrchestrator:
     
     def process_transaction(self, transaction: Transaction) -> dict:
         """
-        Xử lý 1 giao dịch qua pipeline LangGraph.
-        
+        Xử lý 1 giao dịch qua pipeline LangGraph với real-time events.
+
         Returns:
             dict với final_decision, final_message, và full state
         """
         if not self._initialized:
             self.initialize()
-        
+
+        txn_id = transaction.transaction_id
+
         print(f"\n{'*'*70}")
-        print(f" PROCESSING: {transaction.transaction_id}")
+        print(f" PROCESSING: {txn_id}")
         print(f" {transaction.sender_id} → {transaction.receiver_id}: ${transaction.amount:,.2f}")
         print(f"{'*'*70}")
-        
+
+        # Emit: Transaction submitted
+        event_emitter.emit_step(txn_id, "submit", "done",
+            f"{transaction.sender_id} → {transaction.receiver_id}: ${transaction.amount:,.2f}")
+
         # ─── Run LangGraph pipeline ───
         initial_state: GraphState = {
             "transaction": transaction.model_dump(),
@@ -797,31 +805,122 @@ class FraudDetectionOrchestrator:
             "final_message": "",
             "error": None,
         }
-        
+
+        # Node -> step mapping for events
+        node_to_step = {
+            "phase1_screening": "phase1",
+            "end_allow": "decision",
+            "end_block": "decision",
+            "planner": "planner",
+            "executor": "executor",
+            "vision": "vision",
+            "planner_evaluate": "evaluate",
+            "report_generator": "report",
+            "detective": "detective",
+        }
+
+        final_state = initial_state
+
         try:
-            final_state = self.app.invoke(initial_state)
+            # Stream qua pipeline để emit events real-time
+            for event in self.app.stream(initial_state, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    step = node_to_step.get(node_name, node_name)
+
+                    # Emit active event
+                    event_emitter.emit_step(txn_id, step, "active", f"Running {node_name}...")
+
+                    # Update final state
+                    if isinstance(node_output, dict):
+                        final_state = {**final_state, **node_output}
+
+                    # Extract detail for done event
+                    detail = ""
+                    if node_name == "phase1_screening":
+                        risk_level = final_state.get("phase1_risk_level", "")
+                        phase1 = final_state.get("phase1_result", {})
+                        risk_score = phase1.get("risk_score", 0) if phase1 else 0
+                        detail = f"{risk_level.upper()} (score: {risk_score:.3f})"
+
+                        # Emit routing event
+                        event_emitter.emit_step(txn_id, "routing", "done",
+                            f"Risk level: {risk_level.upper()}", {"risk_level": risk_level})
+
+                        # If GREEN or RED, mark investigation steps as skipped
+                        if risk_level in ("green", "red"):
+                            for skip_step in ["planner", "executor", "vision", "evaluate", "report", "detective"]:
+                                event_emitter.emit_step(txn_id, skip_step, "skipped",
+                                    f"Skipped ({risk_level.upper()} path)")
+
+                    elif node_name == "planner":
+                        tasks = final_state.get("current_tasks", [])
+                        detail = f"Created {len(tasks)} investigation tasks"
+
+                    elif node_name == "executor":
+                        results = final_state.get("all_results", [])
+                        detail = f"Collected {len(results)} evidence items"
+
+                    elif node_name == "vision":
+                        vision = final_state.get("vision_analysis", {})
+                        risk = vision.get("overall_risk_level", "unknown") if vision else "unknown"
+                        detail = f"Pattern analysis: {risk} risk"
+
+                    elif node_name == "planner_evaluate":
+                        conf = final_state.get("planner_confidence", 0)
+                        done = final_state.get("investigation_done", False)
+                        detail = f"Confidence: {conf:.2f}, Done: {done}"
+
+                    elif node_name == "report_generator":
+                        report = final_state.get("report", {})
+                        summary = report.get("executive_summary", "")[:60] if report else ""
+                        detail = f"Report generated: {summary}..."
+
+                    elif node_name == "detective":
+                        decision = final_state.get("final_decision", "escalate")
+                        detail = f"Final decision: {decision.upper()}"
+
+                    elif node_name in ("end_allow", "end_block"):
+                        decision = final_state.get("final_decision", "")
+                        detail = f"{decision.upper()}"
+
+                    else:
+                        detail = f"Completed {node_name}"
+
+                    # Emit done event
+                    event_emitter.emit_step(txn_id, step, "done", detail)
+
+            # Emit final decision event
+            decision = final_state.get("final_decision", "escalate")
+            message = final_state.get("final_message", "")
+            event_emitter.emit_step(txn_id, "decision", "done",
+                f"{decision.upper()}: {message[:80]}", {"decision": decision})
+
         except Exception as e:
             print(f"\n❌ Pipeline error: {e}")
             import traceback
             traceback.print_exc()
+
+            # Emit error event
+            event_emitter.emit_step(txn_id, "decision", "error", str(e))
+
             final_state = {
                 **initial_state,
                 "final_decision": "escalate",
                 "final_message": f"Pipeline error: {str(e)}. Escalating to human review.",
                 "error": str(e),
             }
-        
+
         # ─── Summary ───
         decision = final_state.get("final_decision", "escalate")
         message = final_state.get("final_message", "Unknown")
-        
+
         symbols = {"allow": "✅", "block": "🚫", "escalate": "⚠️"}
-        
+
         print(f"\n{'*'*70}")
         print(f" RESULT: {symbols.get(decision, '?')} {decision.upper()}")
         print(f" {message[:150]}")
         print(f"{'*'*70}")
-        
+
         # ─── In báo cáo chi tiết (nếu có) ───
         report = final_state.get("report")
         if report and isinstance(report, dict):
@@ -832,9 +931,9 @@ class FraudDetectionOrchestrator:
                 print(f"{'─'*70}")
                 print(detailed)
                 print(f"{'─'*70}")
-        
+
         print()
-        
+
         # ─── Store audit trail to Redis (ref: fraud-detection/phase1.py._finalize) ───
         redis_service.store_transaction_result(transaction.transaction_id, {
             "decision": decision,
@@ -844,7 +943,7 @@ class FraudDetectionOrchestrator:
             "amount": str(transaction.amount),
             "timestamp": datetime.now().isoformat(),
         })
-        
+
         return final_state
     
     def shutdown(self):
