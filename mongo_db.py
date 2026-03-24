@@ -219,6 +219,7 @@ class MongoDBClient:
         transactions = []
 
         # ACC_007: 15 GD nhỏ liên tiếp → STRUCTURING
+        # Receiver là MULE accounts (blacklisted) → bị BLOCK, tiền không chuyển
         for i in range(15):
             transactions.append({
                 "account_id": "ACC_007",
@@ -228,9 +229,11 @@ class MongoDBClient:
                 "receiver_id": f"MULE_{(i % 3) + 1:03d}",
                 "type": "transfer",
                 "channel": "mobile",
+                "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
             })
 
         # ACC_050: GD lớn đột ngột
+        # Cả hai receiver đều blacklisted → bị BLOCK, tiền không chuyển
         transactions.extend([
             {
                 "account_id": "ACC_050",
@@ -240,6 +243,7 @@ class MongoDBClient:
                 "receiver_id": "ACC_666",
                 "type": "transfer",
                 "channel": "web",
+                "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
             },
             {
                 "account_id": "ACC_050",
@@ -249,10 +253,11 @@ class MongoDBClient:
                 "receiver_id": "MULE_002",
                 "type": "transfer",
                 "channel": "web",
+                "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
             },
         ])
 
-        # ACC_001: GD bình thường
+        # ACC_001: GD bình thường → thành công, tiền đã chuyển
         for i in range(5):
             transactions.append({
                 "account_id": "ACC_001",
@@ -262,6 +267,7 @@ class MongoDBClient:
                 "receiver_id": "ACC_002",
                 "type": "transfer",
                 "channel": random.choice(["mobile", "web"]),
+                "status": "completed",  # GD bình thường → thành công
             })
 
         txn_col.insert_many(transactions)
@@ -330,6 +336,29 @@ class MongoDBClient:
             print(f"⚠️  MongoDB query error: {e}")
             from simulators import dynamodb_sim
             return dynamodb_sim.get_transaction_history(account_id, limit)
+
+    def save_transaction(self, transaction_record: dict):
+        """
+        Lưu kết quả giao dịch vào lịch sử.
+
+        Gọi sau khi orchestrator xử lý xong để ghi lại kết quả.
+        transaction_record phải có trường 'status':
+        - "completed": GD thành công, tiền đã chuyển
+        - "blocked":   GD bị chặn, tiền KHÔNG bị trừ
+        - "failed":    GD thất bại do lỗi kỹ thuật
+        """
+        if self._use_simulator:
+            from simulators import dynamodb_sim
+            dynamodb_sim.save_transaction(transaction_record)
+            return
+
+        try:
+            self.db["transaction_history"].insert_one({
+                **transaction_record,
+                "_saved_at": datetime.now().isoformat(),
+            })
+        except Exception as e:
+            print(f"⚠️  MongoDB save_transaction error: {e}")
 
     def get_related_accounts(self, account_id: str) -> list[str]:
         """

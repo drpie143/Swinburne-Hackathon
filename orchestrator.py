@@ -345,10 +345,22 @@ def end_allow(state: GraphState) -> GraphState:
     """Kết thúc GREEN: cho phép giao dịch."""
     txn = state.get("transaction", {})
     phase1 = state.get("phase1_result", {})
-    
+
     print(f"\n   ✅ ALLOWED: {txn.get('transaction_id', '?')}")
     print(f"   Risk score: {phase1.get('risk_score', 0):.3f}")
-    
+
+    # Lưu vào lịch sử với status "completed" (tiền đã chuyển thành công)
+    mongodb_client.save_transaction({
+        "account_id": txn.get("sender_id", ""),
+        "transaction_id": txn.get("transaction_id", ""),
+        "timestamp": txn.get("timestamp", ""),
+        "amount": txn.get("amount", 0),
+        "receiver_id": txn.get("receiver_id", ""),
+        "type": txn.get("transaction_type", "transfer"),
+        "channel": txn.get("channel", ""),
+        "status": "completed",  # GD được phép → tiền đã chuyển
+    })
+
     return {
         "final_decision": "allow",
         "final_message": (
@@ -372,16 +384,28 @@ def end_block(state: GraphState) -> GraphState:
     txn = state.get("transaction", {})
     phase1 = state.get("phase1_result", {})
     sender_id = txn.get("sender_id", "")
-    
+
     print(f"\n   🚫 BLOCKED: {txn.get('transaction_id', '?')}")
     print(f"   Risk score: {phase1.get('risk_score', 0):.3f}")
-    
+
     # Phase 3 enforcement (auto-block)
     if sender_id:
         redis_service.update_blacklist(sender_id, add=True)
         redis_service.update_risk_score(sender_id, 0.95)
         print(f"   → Blacklisted: {sender_id}")
-    
+
+    # Lưu vào lịch sử với status "blocked" (tiền KHÔNG bị trừ)
+    mongodb_client.save_transaction({
+        "account_id": sender_id,
+        "transaction_id": txn.get("transaction_id", ""),
+        "timestamp": txn.get("timestamp", ""),
+        "amount": txn.get("amount", 0),
+        "receiver_id": txn.get("receiver_id", ""),
+        "type": txn.get("transaction_type", "transfer"),
+        "channel": txn.get("channel", ""),
+        "status": "blocked",  # GD bị chặn → tiền KHÔNG bị trừ
+    })
+
     return {
         "final_decision": "block",
         "final_message": (
@@ -623,10 +647,25 @@ def detective_node(state: GraphState) -> GraphState:
     report = InvestigationReport(**report_dict)
     
     # Pass sender_id từ transaction state làm fallback
-    txn_sender_id = state.get("transaction", {}).get("sender_id", "")
+    txn = state.get("transaction", {})
+    txn_sender_id = txn.get("sender_id", "")
     
     result = _detective.adjudicate(report, sender_id_fallback=txn_sender_id)
-    
+
+    # Lưu vào lịch sử với status phản ánh đúng quyết định
+    # "block"/"escalate" → tiền KHÔNG bị trừ; "allow" → tiền đã chuyển
+    txn_status = "completed" if result.decision.value == "allow" else "blocked"
+    mongodb_client.save_transaction({
+        "account_id": txn_sender_id,
+        "transaction_id": txn.get("transaction_id", ""),
+        "timestamp": txn.get("timestamp", ""),
+        "amount": txn.get("amount", 0),
+        "receiver_id": txn.get("receiver_id", ""),
+        "type": txn.get("transaction_type", "transfer"),
+        "channel": txn.get("channel", ""),
+        "status": txn_status,
+    })
+
     return {
         "decision": result.model_dump(),
         "final_decision": result.decision.value,

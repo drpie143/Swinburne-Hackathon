@@ -123,6 +123,14 @@ QUY TẮC:
 - Phân tích ngắn gọn nhưng kỹ lưỡng.
 - Chỉ trả về JSON hợp lệ, không thêm text.
 
+LƯU Ý QUAN TRỌNG về trường "status" trong lịch sử giao dịch:
+- status="completed": Giao dịch THÀNH CÔNG, tiền đã thực sự chuyển đi/đến.
+- status="blocked":   Giao dịch BỊ CHẶN, tiền KHÔNG bị trừ và KHÔNG được nhận.
+  → Khi tính tổng số tiền thực sự chuyển, CHỈ tính các GD có status="completed".
+  → GD bị block vẫn là DẤU HIỆU NGHI NGỜ (cho thấy ý định gian lận) nhưng tiền không di chuyển.
+- status="failed":    Giao dịch THẤT BẠI do lỗi kỹ thuật, tiền KHÔNG bị trừ.
+- Nếu không có trường status: coi như "completed" (dữ liệu cũ).
+
 Định dạng output:
 {
   "analysis": "Phân tích 2-5 câu về phát hiện",

@@ -247,9 +247,13 @@ class DynamoDBSimulator:
         
         # --- Transaction History ---
         # Lịch sử GD gần đây (dùng cho behavioral analysis)
+        # status: "completed" = giao dịch thành công (tiền đã chuyển)
+        #         "blocked"   = giao dịch bị chặn (tiền KHÔNG bị trừ)
+        #         "failed"    = giao dịch thất bại do lỗi kỹ thuật
         self._transactions: dict[str, list[dict]] = {
             "ACC_007": [
                 # 15 GD nhỏ liên tiếp trong 2 giờ → STRUCTURING pattern!
+                # Receiver là MULE accounts (blacklisted) → bị BLOCK, tiền không chuyển
                 {
                     "transaction_id": f"TXN_007_{i:03d}",
                     "timestamp": (datetime.now() - timedelta(minutes=i*8)).isoformat(),
@@ -257,30 +261,34 @@ class DynamoDBSimulator:
                     "receiver_id": f"MULE_{(i % 3) + 1:03d}",     # Gửi cho 3 money mules
                     "type": "transfer",
                     "channel": "mobile",
+                    "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
                 }
                 for i in range(15)
             ],
             "ACC_050": [
                 # GD lớn đột ngột từ tài khoản mới
+                # Cả hai receiver đều blacklisted → bị BLOCK, tiền không chuyển
                 {
                     "transaction_id": "TXN_050_001",
                     "timestamp": (datetime.now() - timedelta(hours=2)).isoformat(),
                     "amount": 25000.00,
-                    "receiver_id": "ACC_666",    # Gửi đến tài khoản blacklisted
+                    "receiver_id": "ACC_666",    # Tài khoản blacklisted
                     "type": "transfer",
                     "channel": "web",
+                    "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
                 },
                 {
                     "transaction_id": "TXN_050_002",
                     "timestamp": (datetime.now() - timedelta(hours=1)).isoformat(),
                     "amount": 15000.00,
-                    "receiver_id": "MULE_002",
+                    "receiver_id": "MULE_002",   # Tài khoản blacklisted
                     "type": "transfer",
                     "channel": "web",
+                    "status": "blocked",  # Receiver blacklisted → GD bị chặn, tiền KHÔNG bị trừ
                 },
             ],
             "ACC_001": [
-                # GD bình thường
+                # GD bình thường → thành công, tiền đã chuyển
                 {
                     "transaction_id": f"TXN_001_{i:03d}",
                     "timestamp": (datetime.now() - timedelta(days=i*3)).isoformat(),
@@ -288,6 +296,7 @@ class DynamoDBSimulator:
                     "receiver_id": "ACC_002",
                     "type": "transfer",
                     "channel": random.choice(["mobile", "web"]),
+                    "status": "completed",  # GD bình thường → thành công
                 }
                 for i in range(5)
             ],
@@ -318,6 +327,24 @@ class DynamoDBSimulator:
         """
         return self._transactions.get(account_id, [])[:limit]
     
+    def save_transaction(self, transaction_record: dict):
+        """
+        Lưu giao dịch mới vào lịch sử.
+
+        Gọi sau khi orchestrator xử lý xong để ghi lại kết quả.
+        transaction_record phải có trường 'status':
+        - "completed": GD thành công, tiền đã chuyển
+        - "blocked":   GD bị chặn, tiền KHÔNG bị trừ
+        - "failed":    GD thất bại do lỗi kỹ thuật
+        """
+        account_id = transaction_record.get("account_id", "")
+        if not account_id:
+            return
+        if account_id not in self._transactions:
+            self._transactions[account_id] = []
+        # Thêm vào đầu danh sách (mới nhất trước)
+        self._transactions[account_id].insert(0, transaction_record)
+
     def get_related_accounts(self, account_id: str) -> list[str]:
         """
         Tìm tài khoản liên quan (dựa trên lịch sử GD).
