@@ -188,6 +188,10 @@ def run_cli_demo():
 # FASTAPI SERVER MODE
 # =====================================================================
 
+# Interval (seconds) between WebSocket heartbeat progress messages
+_WS_HEARTBEAT_INTERVAL = 8
+
+
 def create_fastapi_app():
     """
     Tạo FastAPI application.
@@ -199,7 +203,8 @@ def create_fastapi_app():
     - GET  /scenarios   → List demo scenarios
     - POST /demo/{n}    → Run demo scenario N (1-3)
     """
-    from fastapi import FastAPI, HTTPException
+    import json
+    from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     
     # Shared orchestrator
@@ -219,11 +224,13 @@ def create_fastapi_app():
         lifespan=lifespan,
     )
     
-    # FIX: CORS — chỉ cho phép localhost (thay vì wildcard *)
+    # CORS — allow all origins so React Native clients on any local network IP
+    # (e.g. 192.168.x.x) can reach the API. allow_credentials must be False
+    # when allow_origins is "*".
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000"],
-        allow_credentials=True,
+        allow_origins=["*"],
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -245,6 +252,7 @@ def create_fastapi_app():
                 "process": "POST /transaction",
                 "scenarios": "GET /scenarios",
                 "demo": "POST /demo/{scenario_number}",
+                "pipeline_ws": "WS /ws/pipeline/{transaction_id}",
             },
         }
     
@@ -330,6 +338,123 @@ def create_fastapi_app():
             "detail": result.get("decision"),
         }
     
+    @app.websocket("/ws/pipeline/{transaction_id}")
+    async def websocket_pipeline(websocket: WebSocket, transaction_id: str):
+        """
+        WebSocket endpoint cho pipeline real-time streaming.
+
+        Client kết nối → gửi Transaction JSON → nhận progress updates + kết quả cuối.
+
+        URL: ws://{host}:8000/ws/pipeline/{transaction_id}
+
+        Protocol:
+        - Client gửi: Transaction JSON (fields theo Transaction model)
+        - Server gửi: {"type": "progress", "stage": "...", "message": "..."} trong khi xử lý
+        - Server gửi: {"type": "result", "decision": "...", ...} khi hoàn thành
+        - Server gửi: {"type": "error", "message": "..."} nếu lỗi
+        """
+        await websocket.accept()
+        print(f"[WS] Client connected to pipeline/{transaction_id}")
+
+        try:
+            # ─── Nhận transaction data từ client ───
+            raw = await websocket.receive_text()
+
+            try:
+                txn_data = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Invalid JSON: could not parse transaction data",
+                })
+                return
+
+            # Đảm bảo transaction_id nhất quán với URL path
+            txn_data["transaction_id"] = transaction_id
+
+            # Validate / parse Transaction object
+            try:
+                transaction = Transaction(**txn_data)
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Invalid transaction data: {str(e)}",
+                })
+                return
+
+            # ─── Xác nhận đã nhận ───
+            await websocket.send_json({
+                "type": "progress",
+                "stage": "received",
+                "message": f"Transaction {transaction_id} received, starting pipeline...",
+            })
+
+            # ─── Gửi heartbeat trong khi pipeline đang chạy ───
+            async def send_heartbeats():
+                stages = [
+                    ("screening", "Phase 1: Real-time screening..."),
+                    ("planning", "Phase 2: Planning investigation..."),
+                    ("investigating", "Phase 2: Executing investigation tasks..."),
+                    ("reporting", "Phase 2: Generating investigation report..."),
+                    ("deciding", "Phase 3: Final adjudication..."),
+                ]
+                for stage, msg in stages:
+                    await asyncio.sleep(_WS_HEARTBEAT_INTERVAL)
+                    try:
+                        await websocket.send_json({
+                            "type": "progress",
+                            "stage": stage,
+                            "message": msg,
+                        })
+                    except WebSocketDisconnect:
+                        break
+                    except Exception as hb_err:
+                        print(f"[WS] Heartbeat send failed for pipeline/{transaction_id}: {hb_err}")
+                        break
+
+            heartbeat_task = asyncio.create_task(send_heartbeats())
+
+            try:
+                result = await asyncio.to_thread(
+                    orchestrator.process_transaction, transaction
+                )
+            finally:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+            # ─── Gửi kết quả cuối ───
+            await websocket.send_json({
+                "type": "result",
+                "transaction_id": transaction_id,
+                "decision": result.get("final_decision", "escalate"),
+                "message": result.get("final_message", ""),
+                "phase1": result.get("phase1_result"),
+                "investigation": {
+                    "steps": result.get("investigation_step", 0),
+                    "evidence_count": len(result.get("all_results", [])),
+                    "confidence": result.get("planner_confidence", 0),
+                },
+                "report": result.get("report"),
+                "detail": result.get("decision"),
+            })
+
+        except WebSocketDisconnect:
+            print(f"[WS] Client disconnected from pipeline/{transaction_id}")
+        except Exception as e:
+            print(f"[WS] Error in pipeline/{transaction_id}: {e}")
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Pipeline error: {str(e)}",
+                })
+            except Exception:
+                pass
+        finally:
+            print(f"[WS] Closing connection for pipeline/{transaction_id}")
+
     return app
 
 
